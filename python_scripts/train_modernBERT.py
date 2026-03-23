@@ -380,7 +380,7 @@ def main():
             train_dataset=train_ds,
             eval_dataset=val_ds,
             tokenizer=tokenizer,
-            data_collator=data_collator,
+            data_collator=data_collator
         )
 
 

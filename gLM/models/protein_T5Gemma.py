@@ -38,6 +38,7 @@ class ProteinT5GemmaModel:
         # ---- Encoder / Decoder module config ----
         module_config = T5GemmaModuleConfig(
             hidden_size=self.hidden_size,
+            vocab_size=self.vocab_size,
             num_hidden_layers=self.num_layers,
             num_attention_heads=self.num_heads,
             intermediate_size=self.intermediate_size,

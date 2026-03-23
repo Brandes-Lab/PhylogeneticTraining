@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=T5Gemma_97M_phylo_bs_4096_arrow_lmdb
+#SBATCH --job-name=T5Gemma_97M_phylo_bs_4096_arrow_fasta_debug
 #SBATCH --partition=a100_short
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=100G
 #SBATCH --time=03-00:00:00
-#SBATCH --output=T5Gemma_97M_phylo_bs_4096_arrow_lmdb_%j.out
-#SBATCH --error=T5Gemma_97M_phylo_bs_4096_arrow_lmdb_%j.err
+#SBATCH --output=T5Gemma_97M_phylo_bs_4096_arrow_fasta_debug_%j.out
+#SBATCH --error=T5Gemma_97M_phylo_bs_4096_arrow_fasta_debug_%j.err
 
 set -euo pipefail
 
@@ -100,38 +100,38 @@ cd /gpfs/data/brandeslab/Project/HuggingfaceTransformer/
 
 
 
-# torchrun \
-#   --nproc-per-node=1 \
-#   --master_addr="${MASTER_ADDR}" \
-#   --master_port="${MASTER_PORT}" \
-#   python_scripts/train_modernBERT.py \
-#   --run-name T5Gemma_97M_phylo_bs_4096_arrow_fasta_file \
-#   --model_type "T5Gemma" \
-#   --training_type "phylo_encoder_decoder" \
-#   --wandb_project "phylo-llm" \
-#   --tokenizer-path ./phylo_char_tokenizer_updated \
-#   --train_dataset_type "uniref90_arrow_fasta" \
-#   --max_position_embeddings 1024 \
-#   --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
-#   --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
-#   --index_db_path /gpfs/data/brandeslab/User/as12267/uniref100.idx \
-#   --fasta_path /gpfs/data/brandeslab/Data/uniref/uniref100.fasta \
-#   --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
-#   --output-dir /gpfs/data/brandeslab/model_checkpts \
-#   --num_train_epochs 100 \
-#   --logging_steps 4 \
-#   --batch_sampler "phylo_default" \
-#   --per_device_train_batch_size 128 \
-#   --gradient_accumulation_steps 32 \
-#   --learning_rate 1e-4 \
-#   --dataloader_num_workers 16 \
-#   --dataloader_persistent_workers True \
-#   --dataloader_prefetch_factor 8 \
-#   --eval_strategy "steps" \
-#   --eval_steps 500 \
-#   --per_device_eval_batch_size 256 \
-#   --save_steps 500 \
-#   --save_strategy "steps"
+torchrun \
+  --nproc-per-node=1 \
+  --master_addr="${MASTER_ADDR}" \
+  --master_port="${MASTER_PORT}" \
+  python_scripts/train_modernBERT.py \
+  --run-name T5Gemma_97M_phylo_bs_4096_arrow_fasta_debug \
+  --model_type "T5Gemma" \
+  --training_type "phylo_encoder_decoder" \
+  --wandb_project "phylo-llm" \
+  --tokenizer-path ./phylo_char_tokenizer_updated \
+  --train_dataset_type "uniref90_arrow_fasta" \
+  --max_position_embeddings 1024 \
+  --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
+  --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
+  --index_db_path /gpfs/data/brandeslab/User/as12267/uniref100.idx \
+  --fasta_path /gpfs/data/brandeslab/Data/uniref/uniref100.fasta \
+  --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
+  --output-dir /gpfs/data/brandeslab/model_checkpts \
+  --num_train_epochs 100 \
+  --logging_steps 4 \
+  --batch_sampler "phylo_default" \
+  --per_device_train_batch_size 128 \
+  --gradient_accumulation_steps 32 \
+  --learning_rate 1e-4 \
+  --dataloader_num_workers 16 \
+  --dataloader_persistent_workers True \
+  --dataloader_prefetch_factor 8 \
+  --eval_strategy "steps" \
+  --eval_steps 500 \
+  --per_device_eval_batch_size 256 \
+  --save_steps 500 \
+  --save_strategy "steps"
 
 
 # torchrun \
@@ -241,34 +241,34 @@ cd /gpfs/data/brandeslab/Project/HuggingfaceTransformer/
 #   --save_strategy "steps"  
 
 
-torchrun \
-  --nproc-per-node=1 \
-  --master_addr="${MASTER_ADDR}" \
-  --master_port="${MASTER_PORT}" \
-  python_scripts/train_modernBERT.py \
-  --run-name T5Gemma_97M_phylo_bs_4096_arrow_lmdb \
-  --model_type "T5Gemma" \
-  --training_type "phylo_encoder_decoder" \
-  --wandb_project "phylo-llm" \
-  --tokenizer-path ./phylo_char_tokenizer_updated \
-  --train_dataset_type "uniref90_arrow_lmdb" \
-  --max_position_embeddings 1024 \
-  --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
-  --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
-  --lmdb_path /gpfs/data/brandeslab/Data/uniref/uniref100_merged.lmdb \
-  --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
-  --output-dir /gpfs/data/brandeslab/model_checkpts \
-  --num_train_epochs 100 \
-  --logging_steps 4 \
-  --batch_sampler "phylo_default" \
-  --per_device_train_batch_size 128 \
-  --gradient_accumulation_steps 32 \
-  --learning_rate 1e-4 \
-  --dataloader_num_workers 16 \
-  --dataloader_persistent_workers True \
-  --dataloader_prefetch_factor 8 \
-  --eval_strategy "steps" \
-  --eval_steps 500 \
-  --per_device_eval_batch_size 256 \
-  --save_steps 500 \
-  --save_strategy "steps"
+# torchrun \
+#   --nproc-per-node=1 \
+#   --master_addr="${MASTER_ADDR}" \
+#   --master_port="${MASTER_PORT}" \
+#   python_scripts/train_modernBERT.py \
+#   --run-name T5Gemma_97M_phylo_bs_4096_arrow_lmdb \
+#   --model_type "T5Gemma" \
+#   --training_type "phylo_encoder_decoder" \
+#   --wandb_project "phylo-llm" \
+#   --tokenizer-path ./phylo_char_tokenizer_updated \
+#   --train_dataset_type "uniref90_arrow_lmdb" \
+#   --max_position_embeddings 1024 \
+#   --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
+#   --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
+#   --lmdb_path /gpfs/data/brandeslab/Data/uniref/uniref100_merged.lmdb \
+#   --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
+#   --output-dir /gpfs/data/brandeslab/model_checkpts \
+#   --num_train_epochs 100 \
+#   --logging_steps 4 \
+#   --batch_sampler "phylo_default" \
+#   --per_device_train_batch_size 128 \
+#   --gradient_accumulation_steps 32 \
+#   --learning_rate 1e-4 \
+#   --dataloader_num_workers 16 \
+#   --dataloader_persistent_workers True \
+#   --dataloader_prefetch_factor 8 \
+#   --eval_strategy "steps" \
+#   --eval_steps 500 \
+#   --per_device_eval_batch_size 256 \
+#   --save_steps 500 \
+#   --save_strategy "steps"
