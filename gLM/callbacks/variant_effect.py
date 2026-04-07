@@ -8,6 +8,8 @@ from sklearn.metrics import roc_auc_score
 from transformers import TrainerCallback
 from torch.distributed import is_initialized, get_rank, barrier, all_gather_object
 
+from gLM.attention_mask.prefixlm_flash import run_encoder_flash
+
 
 class ZeroShotVEPEvaluationCallback(TrainerCallback):
     def __init__(
@@ -42,6 +44,8 @@ class ZeroShotVEPEvaluationCallback(TrainerCallback):
             return self.compute_log_odds_phylo_encoder_only(model, seqs, poses, refs, alts)
         elif self.training_type == "phylo_encoder_decoder":
             return self.compute_log_odds_encoder_decoder(model, seqs, poses, refs, alts)
+        elif self.training_type == "prefixlm_modernbert":
+            return self.compute_log_odds_prefixlm(model, seqs, poses, refs, alts)
         else:
             raise ValueError(f"Unknown training type: {self.training_type}")
 
@@ -217,111 +221,89 @@ class ZeroShotVEPEvaluationCallback(TrainerCallback):
 
         return results
 
+    def compute_log_odds_prefixlm(self, model, seqs, poses, refs, alts):
+        """
+        Computes zero-shot variant effect scores for PrefixLM ModernBERT.
 
+        For each variant:
+            • Pack as [CLS] wt_seq [SEP] wt_seq [SEP]
+              The prefix (seq2) = full wild-type, bidirectionally encoded
+              The suffix (seq1) = full wild-type, autoregressively conditioned on prefix
+            • Extract log-probabilities at the mutation position in the suffix
+            • Compute: log P(alt | prefix, suffix_<pos) - log P(ref | prefix, suffix_<pos)
 
-    # def compute_log_odds_encoder_decoder(self, model, seqs, poses, refs, alts):
-    #     """
-    #     Which token (ref or alt) is more probable at position i, given the unmutated sequence upto position i as context.
-    #     Computes zero-shot variant effect scores for encoder-decoder models (e.g., T5).
-    #     For each variant:
-    #         log_odds = log P(alt | decoder_prefix, reference_sequence) - log P(ref | decoder_prefix, reference_sequence)
+        The model sees the entire wt sequence in the prefix (bidirectional context)
+        plus wt tokens 0..pos-1 in the suffix (causal context), then predicts at pos.
 
-    #     Where:
-    #         • The encoder always receives the full *reference sequence* (unmutated).
-    #         • The decoder is given the prefix of the reference sequence *up to but not including* the variant position.
-    #         • The model is asked to predict the next token (at the variant position), and we compare the probabilities it assigns to the ref and alt tokens.
+        Uses run_encoder to bypass ModernBertModel.forward() and inject the
+        PrefixLM attention mask directly into the encoder layers.
+        """
+        results = [None] * len(seqs)
+        device = next(model.parameters()).device
 
+        cls_id = self.tokenizer.cls_token_id
+        sep_id = self.tokenizer.sep_token_id
+        pad_id = self.tokenizer.pad_token_id
 
-    #     • One encoder forward pass per batch
-    #     • Two decoder passes per variant (one for ref, one for alt)
-    #     """
-    #     results = [None] * len(seqs)
-    #     device = next(model.parameters()).device
+        # Step 1: Filter valid examples and build packed sequences
+        valid_data = []
+        for i, (seq, pos, ref, alt) in enumerate(zip(seqs, poses, refs, alts)):
+            # Check packed length: [CLS] + seq + [SEP] + seq + [SEP] = 2*len + 3
+            packed_len = 2 * len(seq) + 3
+            if packed_len > self.max_len:
+                continue
+            if pos < len(seq) and seq[pos] == ref:
+                ref_id = self.tokenizer.convert_tokens_to_ids(ref)
+                alt_id = self.tokenizer.convert_tokens_to_ids(alt)
+                if ref_id is None or alt_id is None:
+                    continue
 
-    #     # Step 1: Filter valid examples from the batch
-    #     valid_data = []
-    #     for i, (seq, pos, ref, alt) in enumerate(zip(seqs, poses, refs, alts)):
-    #         # Skip variants at position 0 (no prefix to condition on)
-    #         if pos == 0:
-    #             continue
-    #         if len(seq) <= self.max_len and pos < len(seq) and seq[pos] == ref:
+                # Tokenize the sequence (no special tokens)
+                seq_ids = self.tokenizer.encode(seq, add_special_tokens=False)
 
-    #             ref_id = self.tokenizer.convert_tokens_to_ids(ref)
-    #             alt_id = self.tokenizer.convert_tokens_to_ids(alt)
+                # Pack: [CLS] wt [SEP] wt [SEP]
+                packed = [cls_id] + seq_ids + [sep_id] + seq_ids + [sep_id]
+                prefix_len = 1 + len(seq_ids) + 1  # [CLS] + wt + [SEP]
 
-    #             if ref_id is None or alt_id is None:
-    #                 continue
+                valid_data.append((i, packed, prefix_len, pos, ref_id, alt_id))
 
-    #             valid_data.append((i, seq, pos, ref_id, alt_id))
+        if not valid_data:
+            return results
 
-        
-    #     if not valid_data:
-    #         return results # all None 
+        indices, packed_seqs, prefix_lens, valid_poses, ref_ids, alt_ids = zip(*valid_data)
 
-    #     indices, valid_seqs, valid_poses, ref_ids, alt_ids = zip(*valid_data)
+        # Step 2: Pad to longest packed sequence in batch
+        max_packed_len = max(len(p) for p in packed_seqs)
+        padded_input_ids = []
+        for packed in packed_seqs:
+            pad_len = max_packed_len - len(packed)
+            padded_input_ids.append(packed + [pad_id] * pad_len)
 
-    #     # Step 2: Tokenize encoder input sequences
-    #     # enc_inputs.input_ids: [B, L_enc]
-    #     enc_inputs = self.tokenizer(
-    #         list(valid_seqs),
-    #         return_tensors="pt",
-    #         padding="longest",
-    #         truncation=True,
-    #         max_length=self.max_len
-    #     ).to(device)
+        input_ids_t = torch.tensor(padded_input_ids, dtype=torch.long, device=device)
+        prefix_lengths_t = torch.tensor(prefix_lens, dtype=torch.long, device=device)
 
-    #     # Step 3: Prepare decoder inputs (prefixes up to mutation site)
-    #     decoder_prefixes = [seq[:pos] for seq, pos in zip(valid_seqs, valid_poses)]
-    #     # print(f"Decoder prefixes (first 5): {decoder_prefixes[:5]}")
-    #    # decoder_inputs.input_ids: [B, L_dec] (L_dec varies but is padded)
-    #     decoder_inputs = self.tokenizer(
-    #         decoder_prefixes,
-    #         return_tensors="pt",
-    #         padding="longest",
-    #         truncation=True,
-    #         max_length=self.max_len
-    #     ).to(device)
+        # Step 3: Forward pass — use appropriate encoder (FA2 or SDPA)
+        with torch.no_grad():
+            hidden_states = run_encoder_flash(model, input_ids_t, prefix_lengths_t, device)
+            logits = model.decoder(model.head(hidden_states))  # (B, T, vocab)
 
-    #     with torch.no_grad():
-    #         # Step 4: Forward pass
-    #         outputs = model(
-    #             input_ids=enc_inputs.input_ids,                # [B, L_enc]
-    #             attention_mask=enc_inputs.attention_mask,      # [B, L_enc]
-    #             decoder_input_ids=decoder_inputs.input_ids,    # [B, L_dec]
-    #             decoder_attention_mask=decoder_inputs.attention_mask,  # [B, L_dec]
-    #         )
+        # Step 4: Score each variant
+        #
+        # The mutation is at position `pos` in the original sequence.
+        # In the packed suffix, this token is at index: prefix_len + pos
+        #
+        # Autoregressive shift: logits[i] predicts the token at position i+1
+        # So logits at (prefix_len + pos - 1) predicts the token at (prefix_len + pos)
+        for batch_idx, (orig_idx, _, prefix_len, pos, ref_id, alt_id) in enumerate(
+            zip(indices, packed_seqs, prefix_lens, valid_poses, ref_ids, alt_ids)
+        ):
+            logit_pos = prefix_len + pos - 1
+            log_probs = torch.nn.functional.log_softmax(logits[batch_idx, logit_pos], dim=0)
+            log_odds = (log_probs[alt_id] - log_probs[ref_id]).item()
+            results[orig_idx] = log_odds
 
-    #         # outputs.logits: [B, L_dec, V] (V = vocab size)
-    #         logits = outputs.logits
+        return results
 
-    #         # Step 5: Get logits for the next token at variant position (last in decoder sequence)
-    #         # logits_i: [B, V]
-    #         logits_i = logits[:, -1, :]
-
-    #         # probs: [B, V] — probability distribution over vocab for each sample
-    #         probs = torch.nn.functional.softmax(logits_i, dim=-1)
-
-    #         # ref_ids_tensor / alt_ids_tensor: [B]
-    #         ref_ids_tensor = torch.tensor(ref_ids, device=device) # Shape: [B]
-    #         alt_ids_tensor = torch.tensor(alt_ids, device=device) # Shape: [B]
-
-    #         # p_ref / p_alt: [B]
-    #         # grab the model's predicted probability for the specific token (ref or alt) for each sample
-    #         p_ref = probs[torch.arange(len(ref_ids_tensor)), ref_ids_tensor]  # p_ref[i] = P(ref_token_i | decoder_prefix_i)
-    #         p_alt = probs[torch.arange(len(alt_ids_tensor)), alt_ids_tensor]  # p_alt[i] = P(alt_token_i | decoder_prefix_i)
-
-    #         # log_odds: [B]
-    #         log_odds = torch.log(p_alt) - torch.log(p_ref)
-    #         log_odds = log_odds.tolist()
-
-
-    #     # Step 6: Assign results to original positions
-    #     for i, log_odd_value in zip(indices, log_odds):
-    #         results[i] = log_odd_value
-        
-    #     return results
-
-        
     
     def run_vep_eval(self, model, step_id):
         rank = get_rank() if is_initialized() else 0
@@ -410,4 +392,3 @@ class ZeroShotVEPEvaluationCallback(TrainerCallback):
         if state.global_step % self.eval_every_n_steps == 0 and state.global_step > 0:
             self.run_vep_eval(model, step_id=state.global_step)
         return control
-

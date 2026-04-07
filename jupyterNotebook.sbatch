@@ -9,8 +9,8 @@
 #SBATCH --mem=50G
 #SBATCH --mail-type=BEGIN
 #SBATCH --mail-user=sinha.anushka12@gmail.com
-#SBATCH --output=/gpfs/data/brandeslab/Project/slurm_logs/%x_%j.out
-#SBATCH --error=/gpfs/data/brandeslab/Project/slurm_logs/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
 # ---------------------- Info ----------------------
 XDG_RUNTIME_DIR=""

@@ -23,11 +23,15 @@ from gLM.models import ProteinBertModel
 from gLM.models import ProteinT5Model
 from gLM.models import ProteinBARTModel
 from gLM.models import ProteinT5GemmaModel
+from gLM.models.protein_modernbert_phylo import ProteinModernBertPrefixLM, run_sanity_checks, prefixlm_forward_flash
 from gLM.tokenizers import TokenizerLoader, PhyloTokenizerLoader
 from gLM.train_utils import CustomBatchSizeTrainer
 from gLM.collator import create_mlm_collator, PhyloCollator
+from gLM.collator.prefixlm_collator import PrefixLMCollator
 from gLM.dataset import Uniref90ArrowDatasetForFASTA, Uniref90ArrowEvalDatasetForFASTA, Uniref90ArrowDatasetForLMDB, Uniref90ArrowEvalDatasetForLMDB
 from gLM.train_utils import PhyloTrainer
+from gLM.train_utils.prefixlm_trainer import PrefixLMTrainer
+from typing import Literal, Optional
 
 # Define device globally
 if torch.cuda.is_available():
@@ -101,10 +105,12 @@ class CustomTrainingArguments(TrainingArguments):
     dataloader_num_workers: int = field(
         default=6, metadata={"help": "Number of dataloader workers"}
     )
-    dataloader_persistent_workers: bool = field(default=True, 
-        metadata={"help": "Number of dataloader_persistent_workers"}
+    dataloader_persistent_workers: bool = field(
+        default=True,
+    metadata={"help": "Number of dataloader_persistent_workers"}
     )
-    dataloader_prefetch_factor: int = field(default=0, 
+    dataloader_prefetch_factor: Optional[int] = field(
+        default=None,
         metadata={"help": "Number of dataloader_prefetch_factor"}
     )
     mlm_probability: float = field(
@@ -120,7 +126,7 @@ class CustomTrainingArguments(TrainingArguments):
         default=True,
         metadata={"help": "Whether to shuffle batches after bucketing by length"},
     )
-    training_type: Literal["MLM", "phylo_encoder_only", "phylo_encoder_decoder"] = field(
+    training_type: Literal["MLM", "phylo_encoder_only", "phylo_encoder_decoder", "prefixlm_modernbert"] = field(
         default="MLM", metadata={"help": "Type of training to perform"}
     )
     ## DDP arguments
@@ -204,9 +210,14 @@ def main():
     parser = HfArgumentParser(
         (ModelArguments, DataArguments, CustomTrainingArguments, WandbArguments)
     )
+
     model_args, data_args, training_args, wandb_args = (
         parser.parse_args_into_dataclasses()
     )
+
+    if training_args.dataloader_num_workers == 0:
+        training_args.dataloader_prefetch_factor = None
+        training_args.dataloader_persistent_workers = False
 
     print(
         f"[Rank {training_args.local_rank}] MASTER_ADDR: {os.environ.get('MASTER_ADDR')}"
@@ -243,17 +254,30 @@ def main():
     print_rank0("GAP ID:", gap_id)
     print_rank0("Tokenizer vocab size:", tokenizer.vocab_size)
 
+    # =========================================================================
     # Build model
+    # =========================================================================
     if model_args.model_type == "ModernBERT":
-        print_rank0("Using ModernBERT model...")
 
-        model = ProteinBertModel(
-            vocab_size=tokenizer.vocab_size, 
-            tokenizer=tokenizer, 
-            attn_implementation=model_args.attn_implementation
-        ).build()
+        # --- PrefixLM: use dedicated builder ---
+        if training_args.training_type == "prefixlm_modernbert":
+            print_rank0(f"Using ModernBERT model with PrefixLM attention ({model_args.attn_implementation})...")
+            model = ProteinModernBertPrefixLM(
+                vocab_size=tokenizer.vocab_size,
+                tokenizer=tokenizer
+            ).build()
+
+        # --- Standard ModernBERT (MLM, phylo_encoder_only) ---
+        else:
+            print_rank0("Using ModernBERT model...")
+            model = ProteinBertModel(
+                vocab_size=tokenizer.vocab_size, 
+                tokenizer=tokenizer, 
+                attn_implementation=model_args.attn_implementation
+            ).build()
+
         model.gradient_checkpointing_enable()
-        model.to(training_args.local_rank)
+        model.to(DEVICE)
         print_rank0(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
         print_rank0("Hidden size used:", model.config.hidden_size)
     
@@ -295,6 +319,9 @@ def main():
     training_args.output_dir = f"{training_args.output_dir}/{training_args.run_name}"
     print_rank0(f"max_position_embeddings: {model_args.max_position_embeddings}")
 
+    # =========================================================================
+    # Load dataset
+    # =========================================================================
     if data_args.train_dataset_type == "tokenized_map":
         print_rank0(f"using pre-tokenized dataset")
         train_ds = load_from_disk(data_args.train_dataset_path)
@@ -305,15 +332,23 @@ def main():
 
     elif data_args.train_dataset_type == "uniref90_arrow_fasta":
         print_rank0(f"using Uniref90 Arrow and Index File dataset")
+
+        # PrefixLM uses the same dataset as phylo_encoder_decoder
+        ds_training_type = (
+            "phylo_encoder_decoder"
+            if training_args.training_type == "prefixlm_modernbert"
+            else training_args.training_type
+        )
+
         train_ds = Uniref90ArrowDatasetForFASTA(
                     dataset_path=data_args.train_dataset_path,
-                    training_type=training_args.training_type,
+                    training_type=ds_training_type,
                     fasta_path=data_args.fasta_path,
                     idx_db_path=data_args.index_db_path
                 )
         val_ds = Uniref90ArrowEvalDatasetForFASTA(
             dataset_path=data_args.val_dataset_path,
-            training_type=training_args.training_type,
+            training_type=ds_training_type,
             fasta_path=data_args.fasta_path,
             idx_db_path=data_args.index_db_path
         )
@@ -321,19 +356,28 @@ def main():
     
     elif data_args.train_dataset_type == "uniref90_arrow_lmdb":
         print_rank0(f"using Uniref90 Arrow and LMDB dataset")
+
+        ds_training_type = (
+            "phylo_encoder_decoder"
+            if training_args.training_type == "prefixlm_modernbert"
+            else training_args.training_type
+        )
+
         train_ds = Uniref90ArrowDatasetForLMDB(
                     dataset_path=data_args.train_dataset_path,
-                    training_type=training_args.training_type,
+                    training_type=ds_training_type,
                     lmdb_path=data_args.lmdb_path
                 )
         val_ds = Uniref90ArrowEvalDatasetForLMDB(
             dataset_path=data_args.val_dataset_path,
-            training_type=training_args.training_type,
+            training_type=ds_training_type,
             lmdb_path=data_args.lmdb_path
         )
         print_rank0("Validation dataset size:", len(val_ds))
 
-
+    # =========================================================================
+    # Create collator
+    # =========================================================================
     if training_args.training_type == "MLM":
         print_rank0(f"Using MLM collator for training type: {training_args.training_type}")
         print_rank0(f"Using {training_args.mlm_probability} masking probability")
@@ -343,7 +387,6 @@ def main():
                 mlm_probability=training_args.mlm_probability    
             )
 
-
     elif training_args.training_type in ["phylo_encoder_only", "phylo_encoder_decoder"]:
         print_rank0(f"Using Phylo collator for training type: {training_args.training_type}")
         data_collator = PhyloCollator(
@@ -352,7 +395,44 @@ def main():
                 max_seq_len=model_args.max_position_embeddings
             )
 
-    if training_args.batch_sampler == "phylo_default":
+    elif training_args.training_type == "prefixlm_modernbert":
+        print_rank0(f"Using PrefixLM collator for training type: {training_args.training_type}")
+        print_rank0(f"Packing format: [CLS] seq2 [SEP] seq1 [SEP]")
+        # has_pid=False because dataset returns (seq1, seq2) pairs
+        # set has_pid=True if your dataset returns (seq1, seq2, pid) triples
+        data_collator = PrefixLMCollator(
+                tokenizer=tokenizer,
+                max_seq_len=model_args.max_position_embeddings,
+                has_pid=False,
+            )
+
+    # =========================================================================
+    # Create trainer
+    # =========================================================================
+    if training_args.training_type == "prefixlm_modernbert":
+        print_rank0("Using PrefixLMTrainer (custom compute_loss with layer-by-layer encoder bypass)")
+        trainer = PrefixLMTrainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_ds,
+            eval_dataset=val_ds,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+        )
+
+        # Run sanity checks on rank 0 before training
+        if rank == 0:
+            print_rank0("\n--- PrefixLM sanity checks ---")
+            batch_raw = [train_ds[i] for i in range(4)]
+            batch_out = data_collator(batch_raw)
+            model.eval()
+            loss, logits = prefixlm_forward_flash(model, batch_out, DEVICE)
+            print_rank0(f"Sanity forward pass — loss: {loss.item():.4f}")
+            model.zero_grad()
+            run_sanity_checks(model, batch_out, DEVICE)
+            model.train()
+
+    elif training_args.batch_sampler == "phylo_default":
         print_rank0("using phylo_default Trainer")
         trainer = PhyloTrainer(
             model=model,
@@ -384,70 +464,18 @@ def main():
         )
 
 
-    if training_args.training_type == "phylo_encoder_only":
-        trainer.add_callback(PercentIdentityLoggingCallback())
-
-    # trainer.add_callback(
-    #     ZeroShotVEPEvaluationCallback(
-    #         tokenizer=tokenizer,
-    #         input_csv=data_args.vep_input_csv,
-    #         trainer=trainer,
-    #         max_len=model_args.max_position_embeddings,
-    #         batch_size=256,
-    #         eval_every_n_steps=training_args.vep_eval_steps,
-    #         training_type=training_args.training_type, 
+    # if training_args.training_type == "prefixlm_modernbert":
+    #     trainer.add_callback(
+    #         ZeroShotVEPEvaluationCallback(
+    #             tokenizer=tokenizer,
+    #             input_csv=data_args.vep_input_csv,
+    #             trainer=trainer,
+    #             max_len=model_args.max_position_embeddings,
+    #             batch_size=training_args.per_device_eval_batch_size,
+    #             eval_every_n_steps=training_args.vep_eval_steps,
+    #             training_type="prefixlm_modernbert",
+    #         )
     #     )
-    # )
-
-    # trainer.add_callback(LossPrintCallback())
-    # print_rank0("\nInspecting shapes of first few batches...")
-    # train_dataloader = trainer.get_train_dataloader()
-
-    # for i, batch in enumerate(train_dataloader):
-    #     print_rank0(f"\nBatch {i}")
-    #     for k, v in batch.items():
-    #         if isinstance(v, torch.Tensor):
-    #             print_rank0(f"  {k}: {v.shape}")
-    #         else:
-    #             print_rank0(f"  {k}: type={type(v)}")
-    #     if i == 3:  # stop after 4 batches
-    #         break
-
-    # print("Benchmarking: Fetching 100 batches from train_dataloader...")
-
-    # train_dataloader = trainer.get_train_dataloader()
-
-    # print(f"DataLoader num_workers = {train_dataloader.num_workers}")
-    # print(f"DataLoader prefetch_factor = {train_dataloader.prefetch_factor}")
-    # print(f"DataLoader persistent_workers = {train_dataloader.persistent_workers}")
-
-
-    # start = time.time()
-    # for i, batch in enumerate(train_dataloader):
-    #     if i == 100:
-    #         break
-    # end = time.time()
-
-    # print(f"Fetched 100 batches in {end - start:.2f} seconds")
-
-
-    # if rank == 0:
-    #     model.eval()
-    #     train_dataloader = trainer.get_train_dataloader()
-    #     batch = next(iter(train_dataloader))
-    #     batch = {k: v.to(model.device) for k, v in batch.items()}
-    #     with torch.no_grad():
-    #         outputs = model(**batch)
-    #     labels = batch["labels"]
-    #     predicted_tokens_per_sample = (labels != -100).sum(dim=-1).float()
-    #     print(f"Model loss: {outputs.loss.item():.4f}")
-    #     print(f"Mean predicted tokens per sample: {predicted_tokens_per_sample.mean().item():.1f}")
-    #     print(f"Loss × mean_tokens: {outputs.loss.item() * predicted_tokens_per_sample.mean().item():.4f}")
-    #     print(f"Loss / mean_tokens: {outputs.loss.item() / predicted_tokens_per_sample.mean().item():.4f}")
-    #     model.train()
-
-    # --- END DEBUG ---
-
 
     trainer.train()
 
