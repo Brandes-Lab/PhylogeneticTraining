@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=T5Gemma_97M_phylo_bs_4096_arrow_fasta_debug
-#SBATCH --partition=a100_short
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=16
+#SBATCH --job-name=ModernBert_PrefixLM_113M_trial
+#SBATCH --partition=a100_dev
+#SBATCH --gres=gpu:1             
+#SBATCH --cpus-per-task=32
 #SBATCH --mem=100G
-#SBATCH --time=03-00:00:00
-#SBATCH --output=T5Gemma_97M_phylo_bs_4096_arrow_fasta_debug_%j.out
-#SBATCH --error=T5Gemma_97M_phylo_bs_4096_arrow_fasta_debug_%j.err
+#SBATCH --time=2:00:00
+#SBATCH --output=ModernBert_PrefixLM_113M_trial%j.out
+#SBATCH --error=ModernBert_PrefixLM_113M_trial%j.err
 
 set -euo pipefail
 
@@ -17,9 +17,13 @@ module load cuda/12.6
 source /gpfs/share/apps/anaconda3/gpu/2023.09/etc/profile.d/conda.sh
 conda activate /gpfs/data/brandeslab/User/as12267/.conda/envs/huggingface_bert_cu126
 
-echo "which python: $(which python)"
-echo "which torchrun: $(which torchrun)"
-python -c "import sys; print(sys.executable)"
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+export PYTHONPATH=/gpfs/home/rm7569/HuggingfaceTransformer:${PYTHONPATH:-}
+
+
+echo "Python executable: $(which python)"
+echo "Torch version: $(python -c 'import torch; print(torch.__version__)')"
+echo "CUDA available: $(python -c 'import torch; print(torch.cuda.is_available())')"
 
 # If you previously hit cuDNN mismatches, keep this; otherwise you can remove it.
 export LD_LIBRARY_PATH=$(echo "${LD_LIBRARY_PATH:-}" | tr ':' '\n' \
@@ -34,8 +38,9 @@ export MASTER_PORT=$((12000 + RANDOM % 20000))
 export HF_HOME=/gpfs/data/brandeslab/User/as12267/cache/huggingface
 export TOKENIZERS_PARALLELISM=false
 
-# --- run ---
-cd /gpfs/data/brandeslab/Project/HuggingfaceTransformer/
+# --- WANDB ---
+export WANDB_API_KEY="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"
+echo "WANDB_API_KEY is: $WANDB_API_KEY"
 
 
 # torchrun \
@@ -98,16 +103,14 @@ cd /gpfs/data/brandeslab/Project/HuggingfaceTransformer/
 #   --eval_strategy "no" \
 #   --save_strategy "epoch"
 
-
-
 torchrun \
   --nproc-per-node=1 \
   --master_addr="${MASTER_ADDR}" \
   --master_port="${MASTER_PORT}" \
   python_scripts/train_modernBERT.py \
-  --run-name T5Gemma_97M_phylo_bs_4096_arrow_fasta_debug \
-  --model_type "T5Gemma" \
-  --training_type "phylo_encoder_decoder" \
+  --run-name ModernBert_PrefixLM_113M_trial  \
+  --model_type "ModernBERT" \
+  --training_type "prefixlm_modernbert" \
   --wandb_project "phylo-llm" \
   --tokenizer-path ./phylo_char_tokenizer_updated \
   --train_dataset_type "uniref90_arrow_fasta" \
@@ -117,21 +120,57 @@ torchrun \
   --index_db_path /gpfs/data/brandeslab/User/as12267/uniref100.idx \
   --fasta_path /gpfs/data/brandeslab/Data/uniref/uniref100.fasta \
   --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
-  --output-dir /gpfs/data/brandeslab/model_checkpts \
-  --num_train_epochs 100 \
+  --output-dir /gpfs/data/brandeslab/phylo_llm_checkpts \
+  --vep_eval_steps 5 \
+  --max_steps 10 \
   --logging_steps 4 \
   --batch_sampler "phylo_default" \
-  --per_device_train_batch_size 128 \
-  --gradient_accumulation_steps 32 \
+  --per_device_train_batch_size 32 \
+  --gradient_accumulation_steps 8 \
   --learning_rate 1e-4 \
   --dataloader_num_workers 16 \
   --dataloader_persistent_workers True \
   --dataloader_prefetch_factor 8 \
   --eval_strategy "steps" \
-  --eval_steps 500 \
-  --per_device_eval_batch_size 256 \
-  --save_steps 500 \
-  --save_strategy "steps"
+  --eval_steps 4 \
+  --per_device_eval_batch_size 128\
+  --save_steps 4 \
+  --save_strategy "steps" \
+  --warmup_steps 0\
+
+
+# torchrun \
+#   --nproc-per-node=1 \
+#   --master_addr="${MASTER_ADDR}" \
+#   --master_port="${MASTER_PORT}" \
+#   python_scripts/train_modernBERT.py \
+#   --run-name T5Gemma_97M_phylo_bs_4096_arrow_fasta_debug \
+#   --model_type "T5Gemma" \
+#   --training_type "phylo_encoder_decoder" \
+#   --wandb_project "phylo-llm" \
+#   --tokenizer-path ./phylo_char_tokenizer_updated \
+#   --train_dataset_type "uniref90_arrow_fasta" \
+#   --max_position_embeddings 1024 \
+#   --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
+#   --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
+#   --index_db_path /gpfs/data/brandeslab/User/as12267/uniref100.idx \
+#   --fasta_path /gpfs/data/brandeslab/Data/uniref/uniref100.fasta \
+#   --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
+#   --output-dir /gpfs/data/brandeslab/model_checkpts \
+#   --num_train_epochs 100 \
+#   --logging_steps 4 \
+#   --batch_sampler "phylo_default" \
+#   --per_device_train_batch_size 128 \
+#   --gradient_accumulation_steps 32 \
+#   --learning_rate 1e-4 \
+#   --dataloader_num_workers 16 \
+#   --dataloader_persistent_workers True \
+#   --dataloader_prefetch_factor 8 \
+#   --eval_strategy "steps" \
+#   --eval_steps 500 \
+#   --per_device_eval_batch_size 256 \
+#   --save_steps 500 \
+#   --save_strategy "steps"
 
 
 # torchrun \

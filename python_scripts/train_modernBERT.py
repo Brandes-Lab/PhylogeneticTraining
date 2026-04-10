@@ -464,18 +464,18 @@ def main():
         )
 
 
-    # if training_args.training_type == "prefixlm_modernbert":
-    #     trainer.add_callback(
-    #         ZeroShotVEPEvaluationCallback(
-    #             tokenizer=tokenizer,
-    #             input_csv=data_args.vep_input_csv,
-    #             trainer=trainer,
-    #             max_len=model_args.max_position_embeddings,
-    #             batch_size=training_args.per_device_eval_batch_size,
-    #             eval_every_n_steps=training_args.vep_eval_steps,
-    #             training_type="prefixlm_modernbert",
-    #         )
-    #     )
+    if training_args.training_type == "prefixlm_modernbert":
+        trainer.add_callback(
+            ZeroShotVEPEvaluationCallback(
+                tokenizer=tokenizer,
+                input_csv=data_args.vep_input_csv,
+                trainer=trainer,
+                max_len=model_args.max_position_embeddings,
+                batch_size=training_args.per_device_eval_batch_size,
+                eval_every_n_steps=training_args.vep_eval_steps,
+                training_type="prefixlm_modernbert",
+            )
+        )
 
     trainer.train()
 
