@@ -1,29 +1,23 @@
 """
 PrefixLM Data Collator for paired protein sequences.
-
 Packs each (seq1, seq2) pair as: [CLS] seq2 [SEP] seq1 [SEP]
 Returns input_ids, labels (with -100 on prefix), and prefix_lengths.
-
 The attention mask is NOT built here — it is constructed inside the model's
 forward pass using prefix_lengths, because the mask needs the model's dtype
 and the layer-by-layer bypass requires it at forward time.
 """
-
 import torch
 
 
 class PrefixLMCollator:
     """
     Collator for PrefixLM training: P(seq1 | seq2).
-
     Packs each pair as: [CLS] seq2_tokens [SEP] seq1_tokens [SEP]
     Labels: -100 on prefix positions + final [SEP] + padding,
             real token IDs on suffix positions.
-
     After the autoregressive shift in the model forward:
         logits[SEP_position] predicts first seq1 token
         logits[seq1_i]       predicts seq1_{i+1}
-
     Args:
         tokenizer: tokenizer with cls_token_id, sep_token_id, pad_token_id
         max_seq_len: maximum total packed sequence length (default 4096)
@@ -63,19 +57,25 @@ class PrefixLMCollator:
             # Pack: [CLS] seq2 [SEP] seq1 [SEP]
             packed = [cls_id] + s2_ids + [sep_id] + s1_ids + [sep_id]
 
-            # Truncate seq1 from the right if too long
+            # Truncate both sequences proportionally if too long
             if len(packed) > self.max_seq_len:
-                overflow = len(packed) - self.max_seq_len
-                s1_ids = s1_ids[: len(s1_ids) - overflow]
+                # Available tokens for both sequences (minus 3 special tokens: [CLS], [SEP], [SEP])
+                available = self.max_seq_len - 3
+                total = len(s2_ids) + len(s1_ids)
+                # Split available tokens proportionally to original lengths
+                s2_keep = int(available * len(s2_ids) / total)
+                s1_keep = available - s2_keep
+                s2_ids = s2_ids[:s2_keep]
+                s1_ids = s1_ids[:s1_keep]
                 packed = [cls_id] + s2_ids + [sep_id] + s1_ids + [sep_id]
 
+            # prefix_len recalculated after truncation so it's always correct
             prefix_len = 1 + len(s2_ids) + 1  # [CLS] + seq2 + [SEP]
             all_input_ids.append(packed)
             all_prefix_lengths.append(prefix_len)
 
         # Pad to longest in batch
         max_len = max(len(ids) for ids in all_input_ids)
-
         padded_input_ids = []
         labels_list = []
 

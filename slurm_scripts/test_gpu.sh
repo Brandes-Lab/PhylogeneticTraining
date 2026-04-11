@@ -39,9 +39,7 @@ export HF_HOME=/gpfs/data/brandeslab/User/as12267/cache/huggingface
 export TOKENIZERS_PARALLELISM=false
 
 # --- WANDB ---
-export WANDB_API_KEY="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"
-echo "WANDB_API_KEY is: $WANDB_API_KEY"
-
+export WANDB_API_KEY="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"
 
 # torchrun \
 #   --nproc-per-node=1 \
@@ -117,7 +115,7 @@ torchrun \
   --max_position_embeddings 1024 \
   --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
   --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
-  --index_db_path /gpfs/data/brandeslab/User/as12267/uniref100.idx \
+  --index_db_path  /gpfs/data/brandeslab/Data/uniref/ \
   --fasta_path /gpfs/data/brandeslab/Data/uniref/uniref100.fasta \
   --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
   --output-dir /gpfs/data/brandeslab/phylo_llm_checkpts \
@@ -138,7 +136,7 @@ torchrun \
   --save_strategy "steps" \
   --warmup_steps 0\
 
-
+#   --index_db_path /gpfs/data/brandeslab/rm7569/uniref100.idx \
 # torchrun \
 #   --nproc-per-node=1 \
 #   --master_addr="${MASTER_ADDR}" \

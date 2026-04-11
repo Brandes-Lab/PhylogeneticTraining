@@ -3,7 +3,7 @@
 #SBATCH --partition=a100_short
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=100G
+#SBATCH --mem=200G
 #SBATCH --time=03-00:00:00
 #SBATCH --output=modernBERT_113M_prefixlm_bs512_ctxt_4096_%j.out
 #SBATCH --error=modernBERT_113M_prefixlm_bs512_ctxt_4096_%j.err
@@ -17,9 +17,13 @@ module load cuda/12.6
 source /gpfs/share/apps/anaconda3/gpu/2023.09/etc/profile.d/conda.sh
 conda activate /gpfs/data/brandeslab/User/as12267/.conda/envs/huggingface_bert_cu126
 
-echo "which python: $(which python)"
-echo "which torchrun: $(which torchrun)"
-python -c "import sys; print(sys.executable)"
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+export PYTHONPATH=/gpfs/home/rm7569/HuggingfaceTransformer:${PYTHONPATH:-}
+
+
+echo "Python executable: $(which python)"
+echo "Torch version: $(python -c 'import torch; print(torch.__version__)')"
+echo "CUDA available: $(python -c 'import torch; print(torch.cuda.is_available())')"
 
 # If you previously hit cuDNN mismatches, keep this; otherwise you can remove it.
 export LD_LIBRARY_PATH=$(echo "${LD_LIBRARY_PATH:-}" | tr ':' '\n' \
@@ -34,11 +38,10 @@ export MASTER_PORT=$((12000 + RANDOM % 20000))
 export HF_HOME=/gpfs/data/brandeslab/User/as12267/cache/huggingface
 export TOKENIZERS_PARALLELISM=false
 
-# --- run ---
-cd /gpfs/data/brandeslab/Project/HuggingfaceTransformer/
-
-
-
+# --- WANDB ---
+export WANDB_API_KEY="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"
+echo "WANDB_API_KEY is: $WANDB_API_KEY"
+export PYTORCH_ALLOC_CONF=expandable_segments:True
 # torchrun \
 #   --nproc-per-node=1 \
 #   --master_addr="${MASTER_ADDR}" \
@@ -110,7 +113,7 @@ torchrun \
   --master_addr="${MASTER_ADDR}" \
   --master_port="${MASTER_PORT}" \
   python_scripts/train_modernBERT.py \
-  --run-name modernBERT_113M_prefixlm_bs512_ctxt_2048 \
+  --run-name modernBERT_113M_prefixlm_bs512_ctxt_2048_100k \
   --model_type "ModernBERT" \
   --training_type "prefixlm_modernbert" \
   --wandb_project "phylo-llm" \
@@ -121,18 +124,17 @@ torchrun \
   --lmdb_path /gpfs/data/brandeslab/Data/uniref/uniref100_merged.lmdb \
   --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
   --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
-  --output-dir /gpfs/data/brandeslab/model_checkpts \
+  --output-dir /gpfs/data/brandeslab/phylo_llm_checkpts \
   --attn_implementation flash_attention_2 \
-  --num_train_epochs 100 \
-  --vep_eval_steps 500 \
-  --logging_steps 4 \
-  --per_device_train_batch_size 32 \
-  --gradient_accumulation_steps 16 \
+  --max_steps 100000 \
+  --vep_eval_steps 1000 \
+  --logging_steps 50 \
+  --per_device_train_batch_size 16 \
+  --gradient_accumulation_steps 32 \
   --learning_rate 3e-4 \
   --dataloader_num_workers 4 \
   --dataloader_persistent_workers True \
   --dataloader_prefetch_factor 2 \
   --eval_strategy "no" \
-  --save_steps 500 \
+  --save_steps 2000 \
   --save_strategy "steps"
-

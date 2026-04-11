@@ -13,36 +13,48 @@ class Uniref90ArrowDatasetForLMDB(Dataset):
       - "member_ids": List[str]  (already prefixed with 'Uniref100_')
     Sequences are fetched on-demand from an LMDB (key=member_id, value=sequence bytes).
     """
-    
+
     def __init__(self, dataset_path: str, training_type: str, lmdb_path: str):
         super().__init__()
         self.training_type = training_type
         self.dataset = load_from_disk(dataset_path)
         self.lmdb_path = lmdb_path
-        self._env = None 
-    
+        self._env = None
+
     def _get_env(self):
         if self._env is None:
             self._env = lmdb.open(
-                self.lmdb_path, 
-                readonly=True, 
-                lock=False, 
-                subdir=True)
+                self.lmdb_path,
+                readonly=True,
+                lock=False,
+                subdir=True,
+                readahead=False,   # disables OS readahead, prevents shm exhaustion
+                meminit=False      # don't zero-initialize memory pages
+            )
         return self._env
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state['_env'] = None  # discard open handle before pickling to worker
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._env = None  # worker will open fresh connection on first access
 
     def __len__(self):
         return len(self.dataset)
 
     @staticmethod
-    def _fetch_seq(txn, member_id:str) -> str:
+    def _fetch_seq(txn, member_id: str) -> str:
         v = txn.get(member_id.encode('utf-8'))
         if v is None:
             raise KeyError(f"Sequence ID {member_id} not found in LMDB")
         return v.decode("ascii", errors="strict")
-    
+
     def __getitem__(self, idx):
         """
-        Sample a random cluster globally 
+        Sample a random cluster globally
         Sample two distinct member_ids from that cluster
         Fetch sequences from LMDB
         Returns data in the format expected by PhyloCollator:
@@ -57,7 +69,7 @@ class Uniref90ArrowDatasetForLMDB(Dataset):
         if not member_ids or len(member_ids) < 2:
             # Skip this example by trying the next one
             return self.__getitem__(idx)
-        
+
         m1, m2 = random.sample(member_ids, 2)
 
         env = self._get_env()
@@ -68,10 +80,10 @@ class Uniref90ArrowDatasetForLMDB(Dataset):
             except KeyError:
                 # Skip this example by trying the next one
                 return self.__getitem__(idx)
-        
+
         if self.training_type == "MLM":
             return s1 if random.random() < 0.5 else s2
-            
+
         elif self.training_type == "phylo_encoder_only":
             a1, a2 = align_pair(s1, s2)
             if len(a1) != len(a2):
@@ -79,10 +91,10 @@ class Uniref90ArrowDatasetForLMDB(Dataset):
                 return self.__getitem__(idx)
             pid = percent_identity(a1, a2)
             return (a1, a2, pid)
-            
+
         elif self.training_type == "phylo_encoder_decoder":
             return (s1, s2)
-        
+
 
 # -------------------------
 # Deterministic eval dataset
@@ -91,6 +103,7 @@ from torch.utils.data import Dataset
 from datasets import load_from_disk
 import random
 import lmdb
+
 
 class Uniref90ArrowEvalDatasetForLMDB(Dataset):
     """
@@ -126,9 +139,19 @@ class Uniref90ArrowEvalDatasetForLMDB(Dataset):
                 readonly=True,
                 lock=False,
                 subdir=True,
-                readahead=False,
+                readahead=False,   # disables OS readahead, prevents shm exhaustion
+                meminit=False      # don't zero-initialize memory pages
             )
         return self._env
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state['_env'] = None  # discard open handle before pickling to worker
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._env = None  # worker will open fresh connection on first access
 
     def __len__(self):
         return len(self.dataset)
