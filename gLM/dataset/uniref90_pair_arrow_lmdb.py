@@ -29,7 +29,8 @@ class Uniref90ArrowDatasetForLMDB(Dataset):
                 lock=False,
                 subdir=True,
                 readahead=False,   # disables OS readahead, prevents shm exhaustion
-                meminit=False      # don't zero-initialize memory pages
+                meminit=False,      # don't zero-initialize memory pages
+                map_size=1024 * 1024 ** 3 # 1TB
             )
         return self._env
 
@@ -140,10 +141,11 @@ class Uniref90ArrowEvalDatasetForLMDB(Dataset):
                 lock=False,
                 subdir=True,
                 readahead=False,   # disables OS readahead, prevents shm exhaustion
-                meminit=False      # don't zero-initialize memory pages
+                meminit=False,      # don't zero-initialize memory pages]
+                map_size=1024 * 1024 ** 3  # 1TB
             )
         return self._env
-
+        
     def __getstate__(self):
         state = self.__dict__.copy()
         state['_env'] = None  # discard open handle before pickling to worker

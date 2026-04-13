@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=ModernBert_PrefixLM_113M_trial
-#SBATCH --partition=a100_dev
+#SBATCH --job-name=ModernBert_PrefixLM_113M
+#SBATCH --partition=a100_short
 #SBATCH --gres=gpu:1             
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=100G
-#SBATCH --time=2:00:00
-#SBATCH --output=ModernBert_PrefixLM_113M_trial%j.out
-#SBATCH --error=ModernBert_PrefixLM_113M_trial%j.err
+#SBATCH --time=03-00:00:00
+#SBATCH --output=ModernBert_PrefixLM_113M_%j.out
+#SBATCH --error=ModernBert_PrefixLM_113M_%j.err
 
 set -euo pipefail
 
@@ -106,35 +106,32 @@ torchrun \
   --master_addr="${MASTER_ADDR}" \
   --master_port="${MASTER_PORT}" \
   python_scripts/train_modernBERT.py \
-  --run-name ModernBert_PrefixLM_113M_trial  \
+  --run-name ModernBert_PrefixLM_113M \
   --model_type "ModernBERT" \
   --training_type "prefixlm_modernbert" \
   --wandb_project "phylo-llm" \
   --tokenizer-path ./phylo_char_tokenizer_updated \
   --train_dataset_type "uniref90_arrow_fasta" \
-  --max_position_embeddings 1024 \
+  --max_position_embeddings 2048 \
   --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
   --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
-  --index_db_path  /gpfs/data/brandeslab/Data/uniref/ \
+  --index_db_path  /gpfs/data/brandeslab/rm7569/uniref100.idx \
   --fasta_path /gpfs/data/brandeslab/Data/uniref/uniref100.fasta \
   --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
   --output-dir /gpfs/data/brandeslab/phylo_llm_checkpts \
-  --vep_eval_steps 5 \
-  --max_steps 10 \
-  --logging_steps 4 \
-  --batch_sampler "phylo_default" \
-  --per_device_train_batch_size 32 \
-  --gradient_accumulation_steps 8 \
-  --learning_rate 1e-4 \
-  --dataloader_num_workers 16 \
+  --attn_implementation flash_attention_2 \
+  --max_steps 100000 \
+  --vep_eval_steps 1000 \
+  --logging_steps 50 \
+  --per_device_train_batch_size 16 \
+  --gradient_accumulation_steps 32 \
+  --learning_rate 3e-4 \
+  --dataloader_num_workers 4 \
   --dataloader_persistent_workers True \
-  --dataloader_prefetch_factor 8 \
-  --eval_strategy "steps" \
-  --eval_steps 4 \
-  --per_device_eval_batch_size 128\
-  --save_steps 4 \
-  --save_strategy "steps" \
-  --warmup_steps 0\
+  --dataloader_prefetch_factor 2 \
+  --eval_strategy "no" \
+  --save_steps 2000 \
+  --save_strategy "steps"
 
 #   --index_db_path /gpfs/data/brandeslab/rm7569/uniref100.idx \
 # torchrun \

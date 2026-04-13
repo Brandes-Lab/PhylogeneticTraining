@@ -127,7 +127,7 @@ torchrun \
   --output-dir /gpfs/data/brandeslab/phylo_llm_checkpts \
   --attn_implementation flash_attention_2 \
   --max_steps 100000 \
-  --vep_eval_steps 1000 \
+  --vep_eval_steps 100 \
   --logging_steps 50 \
   --per_device_train_batch_size 16 \
   --gradient_accumulation_steps 32 \
@@ -136,5 +136,5 @@ torchrun \
   --dataloader_persistent_workers True \
   --dataloader_prefetch_factor 2 \
   --eval_strategy "no" \
-  --save_steps 2000 \
+  --save_steps 200 \
   --save_strategy "steps"
