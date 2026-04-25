@@ -81,6 +81,9 @@ class CustomTrainingArguments(TrainingArguments):
     max_steps: int = field(
         default=-1, metadata={"help": "Maximum number of training steps"}
     )
+    # num_train_epochs: int = field(
+    #     default=3, metadata={"help": "Number of train epochs"}
+    # )
     per_device_train_batch_size: int = field(
         default=1, metadata={"help": "Training batch size per device"}
     )
@@ -104,7 +107,7 @@ class CustomTrainingArguments(TrainingArguments):
     )
     dataloader_persistent_workers: bool = field(
         default=True,
-        metadata={"help": "Number of dataloader_persistent_workers"}
+    metadata={"help": "Number of dataloader_persistent_workers"}
     )
     dataloader_prefetch_factor: Optional[int] = field(
         default=None,
@@ -135,7 +138,7 @@ class CustomTrainingArguments(TrainingArguments):
     # Arguments that shouldn't be changed really
     bf16: bool = field(default=True)
     fp16: bool = field(default=False)
-    eval_strategy: str = field(default="no")
+    eval_strategy: str = field(default="no")  # not running eval
     eval_steps: int = field(default=50000)
     logging_strategy: str = field(default="steps")
     save_strategy: str = field(default="steps")
@@ -145,7 +148,7 @@ class CustomTrainingArguments(TrainingArguments):
     group_by_length: bool = field(default=False)
     length_column_name: str = field(default="length")
     include_num_input_tokens_seen: str = field(default="non_padding")
-    lr_scheduler_type: str = field(default="linear")
+    lr_scheduler_type : str = field(default="linear")
     warmup_steps: int = field(default=0)
     base_batch_size: int = field(default=8, metadata={"help": "Base batch size for dynamic batching"})
 
@@ -226,7 +229,8 @@ def main():
         f"[Rank {training_args.local_rank}] NCCL_TIMEOUT: {os.environ.get('NCCL_TIMEOUT')}"
     )
 
-    rank = int(os.environ.get("RANK", 0))
+    rank = int(os.environ.get("RANK", 0))       # global rank across all processes
+    # Initialize wandb
     if not wandb_args.disable_wandb and rank == 0:
         wandb.init(
             project=wandb_args.wandb_project,
@@ -236,12 +240,13 @@ def main():
     else:
         wandb.init(mode="disabled")
 
+
     # Load tokenizer
     tokenizer = PhyloTokenizerLoader(model_args.tokenizer_path)
     print_rank0(f"Using tokenizer from: {model_args.tokenizer_path}")
     pad_id = tokenizer.pad_token_id
     mask_id = tokenizer.mask_token_id
-    non_gap_id = tokenizer.convert_tokens_to_ids("-")
+    non_gap_id = tokenizer.convert_tokens_to_ids("-") 
     gap_id = tokenizer.convert_tokens_to_ids("[GAP]")
     print_rank0("Phylo Tokenizer loaded. GAP ID:", gap_id)
     print_rank0("Mask ID:", mask_id)
@@ -254,6 +259,7 @@ def main():
     # =========================================================================
     if model_args.model_type == "ModernBERT":
 
+        # --- PrefixLM: use dedicated builder ---
         if training_args.training_type == "prefixlm_modernbert":
             print_rank0(f"Using ModernBERT model with PrefixLM attention ({model_args.attn_implementation})...")
             model = ProteinModernBertPrefixLM(
@@ -261,38 +267,24 @@ def main():
                 tokenizer=tokenizer
             ).build()
 
+        # --- Standard ModernBERT (MLM, phylo_encoder_only) ---
         else:
             print_rank0("Using ModernBERT model...")
             model = ProteinBertModel(
-                vocab_size=tokenizer.vocab_size,
-                tokenizer=tokenizer,
+                vocab_size=tokenizer.vocab_size, 
+                tokenizer=tokenizer, 
                 attn_implementation=model_args.attn_implementation
             ).build()
 
-        # CHANGE 1: gradient_checkpointing_enable() before .to(DEVICE).
-        # gradient checkpointing installs hooks on the model graph; doing it
-        # after .to() works too but before is the conventional safe order.
         model.gradient_checkpointing_enable()
-
-        # CHANGE 2: do NOT cast to bfloat16 here.
-        # training_args.bf16=True makes the HF Trainer wrap every forward pass
-        # in torch.autocast(dtype=bfloat16) automatically. Parameters stay in
-        # fp32 (standard mixed-precision training). Casting the model to bf16
-        # here would make parameters bf16 too, which loses the fp32 master
-        # copy and destabilises training.
-        # The "Flash Attention 2 without specifying a torch dtype" warning is
-        # silenced by setting config.torch_dtype inside ProteinModernBertPrefixLM.build()
-        # (see that file) — no change needed here.
         model.to(DEVICE)
-
         print_rank0(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
         print_rank0("Hidden size used:", model.config.hidden_size)
-        print_rank0(f"max_position_embeddings: {model.config.max_position_embeddings}")
-
+    
     elif model_args.model_type == "T5":
         print_rank0("Using T5 model...")
         model = ProteinT5Model(
-            vocab_size=tokenizer.vocab_size,
+            vocab_size=tokenizer.vocab_size, 
             tokenizer=tokenizer
         ).build()
         model.config.decoder_start_token_id = tokenizer.pad_token_id
@@ -301,14 +293,16 @@ def main():
         device = torch.device(f"cuda:{training_args.local_rank}" if torch.cuda.is_available() else "cpu")
         model.to(device)
         print_rank0(f"Moving model to device: {device}")
+
+        # model.to(training_args.local_rank)
         print_rank0(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
-        print_rank0("Hidden size used:", model.config.d_model)
+        print_rank0("Hidden size  used:", model.config.d_model)
 
     elif model_args.model_type == "T5Gemma":
         print_rank0("Using T5Gemma model...")
         model = ProteinT5GemmaModel(
-            vocab_size=tokenizer.vocab_size,
-            tokenizer=tokenizer,
+            vocab_size=tokenizer.vocab_size, 
+            tokenizer=tokenizer, 
             attn_implementation=model_args.attn_implementation
         ).build()
         model.config.decoder_start_token_id = tokenizer.pad_token_id
@@ -317,12 +311,13 @@ def main():
         device = torch.device(f"cuda:{training_args.local_rank}" if torch.cuda.is_available() else "cpu")
         model.to(device)
         print_rank0(f"Moving model to device: {device}")
+
+        # model.to(training_args.local_rank)
         print_rank0(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    # CHANGE 3: moved max_position_embeddings log into the ModernBERT block
-    # above (printed from model.config, not model_args, so it reflects what
-    # was actually built). Removed the stale print here.
+    # Update training arguments with parsed values
     training_args.output_dir = f"{training_args.output_dir}/{training_args.run_name}"
+    print_rank0(f"max_position_embeddings: {model_args.max_position_embeddings}")
 
     # =========================================================================
     # Load dataset
@@ -330,12 +325,15 @@ def main():
     if data_args.train_dataset_type == "tokenized_map":
         print_rank0(f"using pre-tokenized dataset")
         train_ds = load_from_disk(data_args.train_dataset_path)
+        # train_ds = train_ds.select(range(500))  # for testing
         val_ds = load_from_disk(data_args.val_dataset_path)
         val_ds = val_ds.shuffle(seed=42)
+    
 
     elif data_args.train_dataset_type == "uniref90_arrow_fasta":
         print_rank0(f"using Uniref90 Arrow and Index File dataset")
 
+        # PrefixLM uses the same dataset as phylo_encoder_decoder
         ds_training_type = (
             "phylo_encoder_decoder"
             if training_args.training_type == "prefixlm_modernbert"
@@ -343,11 +341,11 @@ def main():
         )
 
         train_ds = Uniref90ArrowDatasetForFASTA(
-            dataset_path=data_args.train_dataset_path,
-            training_type=ds_training_type,
-            fasta_path=data_args.fasta_path,
-            idx_db_path=data_args.index_db_path
-        )
+                    dataset_path=data_args.train_dataset_path,
+                    training_type=ds_training_type,
+                    fasta_path=data_args.fasta_path,
+                    idx_db_path=data_args.index_db_path
+                )
         val_ds = Uniref90ArrowEvalDatasetForFASTA(
             dataset_path=data_args.val_dataset_path,
             training_type=ds_training_type,
@@ -355,7 +353,7 @@ def main():
             idx_db_path=data_args.index_db_path
         )
         print_rank0("Validation dataset size:", len(val_ds))
-
+    
     elif data_args.train_dataset_type == "uniref90_arrow_lmdb":
         print_rank0(f"using Uniref90 Arrow and LMDB dataset")
 
@@ -366,10 +364,10 @@ def main():
         )
 
         train_ds = Uniref90ArrowDatasetForLMDB(
-            dataset_path=data_args.train_dataset_path,
-            training_type=ds_training_type,
-            lmdb_path=data_args.lmdb_path
-        )
+                    dataset_path=data_args.train_dataset_path,
+                    training_type=ds_training_type,
+                    lmdb_path=data_args.lmdb_path
+                )
         val_ds = Uniref90ArrowEvalDatasetForLMDB(
             dataset_path=data_args.val_dataset_path,
             training_type=ds_training_type,
@@ -384,27 +382,29 @@ def main():
         print_rank0(f"Using MLM collator for training type: {training_args.training_type}")
         print_rank0(f"Using {training_args.mlm_probability} masking probability")
         data_collator = create_mlm_collator(
-            tokenizer,
-            max_seq_len=model_args.max_position_embeddings,
-            mlm_probability=training_args.mlm_probability
-        )
+                tokenizer,
+                max_seq_len=model_args.max_position_embeddings,  
+                mlm_probability=training_args.mlm_probability    
+            )
 
     elif training_args.training_type in ["phylo_encoder_only", "phylo_encoder_decoder"]:
         print_rank0(f"Using Phylo collator for training type: {training_args.training_type}")
         data_collator = PhyloCollator(
-            tokenizer=tokenizer,
-            training_type=training_args.training_type,
-            max_seq_len=model_args.max_position_embeddings
-        )
+                tokenizer=tokenizer,
+                training_type=training_args.training_type,
+                max_seq_len=model_args.max_position_embeddings
+            )
 
     elif training_args.training_type == "prefixlm_modernbert":
         print_rank0(f"Using PrefixLM collator for training type: {training_args.training_type}")
         print_rank0(f"Packing format: [CLS] seq2 [SEP] seq1 [SEP]")
+        # has_pid=False because dataset returns (seq1, seq2) pairs
+        # set has_pid=True if your dataset returns (seq1, seq2, pid) triples
         data_collator = PrefixLMCollator(
-            tokenizer=tokenizer,
-            max_seq_len=model_args.max_position_embeddings,
-            has_pid=False,
-        )
+                tokenizer=tokenizer,
+                max_seq_len=model_args.max_position_embeddings,
+                has_pid=False,
+            )
 
     # =========================================================================
     # Create trainer
@@ -420,11 +420,7 @@ def main():
             data_collator=data_collator,
         )
 
-        # CHANGE 4: sanity checks only on rank 0, followed by a barrier so
-        # all other ranks wait before proceeding to trainer.train().
-        # Without the barrier, rank 0 is busy with sanity checks while other
-        # ranks have already entered trainer.train() and are blocked on the
-        # DDP collective init — this causes an NCCL timeout/hang.
+        # Run sanity checks on rank 0 before training
         if rank == 0:
             print_rank0("\n--- PrefixLM sanity checks ---")
             batch_raw = [train_ds[i] for i in range(4)]
@@ -435,10 +431,6 @@ def main():
             model.zero_grad()
             run_sanity_checks(model, batch_out, DEVICE)
             model.train()
-
-        # All ranks synchronise here before training starts.
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
 
     elif training_args.batch_sampler == "phylo_default":
         print_rank0("using phylo_default Trainer")
@@ -470,6 +462,20 @@ def main():
             tokenizer=tokenizer,
             data_collator=data_collator
         )
+
+    # if training_args.training_type == "prefixlm_modernbert":
+    #     trainer.add_callback(
+    #         ZeroShotVEPEvaluationCallback(
+    #             tokenizer=tokenizer,
+    #             input_csv=data_args.vep_input_csv,
+    #             trainer=trainer,
+    #             max_len=model_args.max_position_embeddings,
+    #             batch_size=training_args.per_device_eval_batch_size,
+    #             eval_every_n_steps=training_args.vep_eval_steps,
+    #             training_type="prefixlm_modernbert",
+    #         )
+    #     )
+
 
     trainer.train()
 

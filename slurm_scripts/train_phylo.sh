@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=modernBERT_113M_prefixlm_bs512_ctxt_4096
-#SBATCH --partition=a100_short
+#SBATCH --partition=a100_dev
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=200G
-#SBATCH --time=03-00:00:00
-#SBATCH --output=modernBERT_113M_prefixlm_bs512_ctxt_4096_%j.out
-#SBATCH --error=modernBERT_113M_prefixlm_bs512_ctxt_4096_%j.err
+#SBATCH --time=3:00:00
+#SBATCH --output=modernBERT_113M_prefixlm_bs512_ctxt_2048_%j.out
+#SBATCH --error=modernBERT_113M_prefixlm_bs512_ctxt_2048_%j.err
 
 set -euo pipefail
 
@@ -127,11 +127,11 @@ torchrun \
   --output-dir /gpfs/data/brandeslab/phylo_llm_checkpts \
   --attn_implementation flash_attention_2 \
   --max_steps 100000 \
-  --vep_eval_steps 100 \
-  --logging_steps 50 \
+  --vep_eval_steps 50 \
+  --logging_steps 20 \
   --per_device_train_batch_size 16 \
   --gradient_accumulation_steps 32 \
-  --learning_rate 3e-4 \
+  --learning_rate 1e-4 \
   --dataloader_num_workers 4 \
   --dataloader_persistent_workers True \
   --dataloader_prefetch_factor 2 \
