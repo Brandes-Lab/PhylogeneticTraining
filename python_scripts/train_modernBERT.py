@@ -11,7 +11,7 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
-
+import inspect
 import wandb
 import time
 from gLM.callbacks import (
@@ -23,7 +23,8 @@ from gLM.models import ProteinBertModel
 from gLM.models import ProteinT5Model
 from gLM.models import ProteinBARTModel
 from gLM.models import ProteinT5GemmaModel
-from gLM.models.protein_modernbert_phylo import ProteinModernBertPrefixLM, run_sanity_checks, prefixlm_forward_flash
+from gLM.models.protein_modernbert_phylo import ProteinModernBertPrefixLM, run_sanity_checks
+from gLM.attention_mask import prefixlm_forward_flash
 from gLM.tokenizers import TokenizerLoader, PhyloTokenizerLoader
 from gLM.train_utils import CustomBatchSizeTrainer
 from gLM.collator import create_mlm_collator, PhyloCollator
@@ -179,6 +180,10 @@ class DataArguments:
         default="/gpfs/data/brandeslab/Data/uniref/uniref100_bk.lmdb",
         metadata={"help": "Path to the LMDB file for FASTA sequences"},
     )
+    pair_log_csv: str | None = field(
+    default=None,
+    metadata={"help": "Optional CSV path to log selected cluster IDs and member ID pairs."},
+    )
 
 
 @dataclass
@@ -258,7 +263,8 @@ def main():
             print_rank0(f"Using ModernBERT model with PrefixLM attention ({model_args.attn_implementation})...")
             model = ProteinModernBertPrefixLM(
                 vocab_size=tokenizer.vocab_size,
-                tokenizer=tokenizer
+                tokenizer=tokenizer, 
+                max_position_embeddings=model_args.max_position_embeddings,
             ).build()
 
         else:
@@ -268,11 +274,12 @@ def main():
                 tokenizer=tokenizer,
                 attn_implementation=model_args.attn_implementation
             ).build()
-
+            print_rank0(f"After build: {model.config.max_position_embeddings}")
         # CHANGE 1: gradient_checkpointing_enable() before .to(DEVICE).
         # gradient checkpointing installs hooks on the model graph; doing it
         # after .to() works too but before is the conventional safe order.
         model.gradient_checkpointing_enable()
+        print_rank0(f"After gc enable: {model.config.max_position_embeddings}")
 
         # CHANGE 2: do NOT cast to bfloat16 here.
         # training_args.bf16=True makes the HF Trainer wrap every forward pass
@@ -284,6 +291,7 @@ def main():
         # silenced by setting config.torch_dtype inside ProteinModernBertPrefixLM.build()
         # (see that file) — no change needed here.
         model.to(DEVICE)
+        print_rank0(f"After .to(DEVICE): {model.config.max_position_embeddings}")
 
         print_rank0(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
         print_rank0("Hidden size used:", model.config.hidden_size)
@@ -334,14 +342,16 @@ def main():
         val_ds = val_ds.shuffle(seed=42)
 
     elif data_args.train_dataset_type == "uniref90_arrow_fasta":
-        print_rank0(f"using Uniref90 Arrow and Index File dataset")
+        print_rank0(f"using Uniref Arrow and Index File dataset")
+        print_rank0(f"training dataset path: {data_args.train_dataset_path}")
+        print_rank0(f"using FASTA path: {data_args.fasta_path}")
+        print_rank0(f"using Index DB path: {data_args.index_db_path}")
 
         ds_training_type = (
             "phylo_encoder_decoder"
             if training_args.training_type == "prefixlm_modernbert"
             else training_args.training_type
         )
-
         train_ds = Uniref90ArrowDatasetForFASTA(
             dataset_path=data_args.train_dataset_path,
             training_type=ds_training_type,
@@ -370,6 +380,15 @@ def main():
             training_type=ds_training_type,
             lmdb_path=data_args.lmdb_path
         )
+
+        # train_ds = Uniref90ArrowDatasetForLMDB_deterministic(
+        #     dataset_path=data_args.train_dataset_path,
+        #     training_type=ds_training_type,
+        #     lmdb_path=data_args.lmdb_path,
+        #     seed=training_args.seed,
+        #     pair_log_csv=data_args.pair_log_csv,
+        #     run_name=training_args.run_name,
+        # )
         val_ds = Uniref90ArrowEvalDatasetForLMDB(
             dataset_path=data_args.val_dataset_path,
             training_type=ds_training_type,
@@ -470,6 +489,15 @@ def main():
             tokenizer=tokenizer,
             data_collator=data_collator
         )
+
+    trainer.add_callback(
+        ZeroShotVEPEvaluationCallback(
+            tokenizer=tokenizer,
+            input_csv=data_args.vep_input_csv,
+            trainer=trainer,
+            eval_every_n_steps=training_args.vep_eval_steps,
+        )
+    )
 
     trainer.train()
 

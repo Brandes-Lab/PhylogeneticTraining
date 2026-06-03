@@ -6,20 +6,21 @@ import torch
 
 from transformers import ModernBertConfig, ModernBertForMaskedLM
 
-from gLM.attention_mask.prefixlm_flash2 import run_encoder_flash, prefixlm_forward_flash
+from gLM.attention_mask import run_encoder_flash, prefixlm_forward_flash
 
 
 class ProteinModernBertPrefixLM:
     """Builder for ModernBertForMaskedLM configured for PrefixLM training with FA2."""
 
-    def __init__(self, vocab_size, tokenizer):
+    def __init__(self, vocab_size, tokenizer, max_position_embeddings=2048):
         self.vocab_size = vocab_size
         self.tokenizer = tokenizer
+        self.max_position_embeddings = max_position_embeddings
 
     def build(self):
         config = ModernBertConfig(
             vocab_size=self.vocab_size,
-            max_position_embeddings=4096,
+            max_position_embeddings=self.max_position_embeddings,
             num_hidden_layers=12,
             num_attention_heads=12,
             hidden_size=768,

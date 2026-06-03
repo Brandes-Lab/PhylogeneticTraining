@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=modernBERT_113M_prefixlm_bs512_ctxt_4096
-#SBATCH --partition=a100_dev
+#SBATCH --job-name=modernBERT_113M_prefixlm_uniref50
+#SBATCH --partition=a100_short
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=200G
-#SBATCH --time=3:00:00
-#SBATCH --output=modernBERT_113M_prefixlm_bs512_ctxt_2048_%j.out
-#SBATCH --error=modernBERT_113M_prefixlm_bs512_ctxt_2048_%j.err
+#SBATCH --mem=100G
+#SBATCH --time=03-00:00:00
+#SBATCH --output=modernBERT_113M_prefixlm_uniref50_%j.out
+#SBATCH --error=modernBERT_113M_prefixlm_uniref50_%j.err
 
 set -euo pipefail
 
@@ -42,38 +42,6 @@ export TOKENIZERS_PARALLELISM=false
 export WANDB_API_KEY="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"
 echo "WANDB_API_KEY is: $WANDB_API_KEY"
 export PYTORCH_ALLOC_CONF=expandable_segments:True
-# torchrun \
-#   --nproc-per-node=1 \
-#   --master_addr="${MASTER_ADDR}" \
-#   --master_port="${MASTER_PORT}" \
-#   python_scripts/train_modernBERT.py \
-#   --run-name modernBERT_113M_prefixlm_bs512_ctxt_4096 \
-#   --model_type "ModernBERT" \
-#   --training_type "prefixlm_modernbert" \
-#   --wandb_project "phylo-llm" \
-#   --tokenizer-path ./phylo_char_tokenizer_with_bos \
-#   --train_dataset_type "uniref90_arrow_fasta" \
-#   --max_position_embeddings 4096 \
-#   --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
-#   --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
-#   --index_db_path /gpfs/data/brandeslab/User/as12267/uniref100.idx \
-#   --fasta_path /gpfs/data/brandeslab/Data/uniref/uniref100.fasta \
-#   --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
-#   --output-dir /gpfs/data/brandeslab/model_checkpts \
-#   --attn_implementation sdpa \
-#   --num_train_epochs 100 \
-#   --vep_eval_steps 500 \
-#   --logging_steps 4 \
-#   --per_device_train_batch_size 128 \
-#   --gradient_accumulation_steps 16 \
-#   --learning_rate 3e-4 \
-#   --dataloader_num_workers 16 \
-#   --dataloader_persistent_workers True \
-#   --dataloader_prefetch_factor 8 \
-#   --eval_strategy "no" \
-#   --save_steps 500 \
-#   --save_strategy "steps"
-
 
 
 # torchrun \
@@ -108,33 +76,133 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True
 
 
 
+# torchrun \
+#   --nproc-per-node=1 \
+#   --master_addr="${MASTER_ADDR}" \
+#   --master_port="${MASTER_PORT}" \
+#   python_scripts/train_modernBERT.py \
+#   --run-name modernBERT_113M_prefixlm_bs512_ctxt_2048_100k \
+#   --model_type "ModernBERT" \
+#   --training_type "prefixlm_modernbert" \
+#   --wandb_project "phylo-llm" \
+#   --tokenizer-path ./phylo_char_tokenizer_with_bos \
+#   --train_dataset_type "uniref90_arrow_lmdb" \
+#   --max_position_embeddings 2048 \
+#   --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
+#   --lmdb_path /gpfs/data/brandeslab/Data/uniref/uniref100_merged.lmdb \
+#   --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
+#   --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
+#   --output-dir /gpfs/data/brandeslab/phylo_llm_checkpts \
+#   --attn_implementation flash_attention_2 \
+#   --max_steps 100000 \
+#   --vep_eval_steps 50 \
+#   --logging_steps 20 \
+#   --per_device_train_batch_size 16 \
+#   --gradient_accumulation_steps 32 \
+#   --learning_rate 1e-4 \
+#   --dataloader_num_workers 4 \
+#   --dataloader_persistent_workers True \
+#   --dataloader_prefetch_factor 2 \
+#   --eval_strategy "no" \
+#   --save_steps 200 \
+#   --save_strategy "steps"
+
+
+# torchrun \
+#   --nproc-per-node=1 \
+#   --master_addr="${MASTER_ADDR}" \
+#   --master_port="${MASTER_PORT}" \
+#   python_scripts/train_modernBERT.py \
+#   --run-name modernBERT_113M_phylo_bs512_ctxt_2048_benchmark_AS \
+#   --model_type "ModernBERT" \
+#   --training_type "phylo_encoder_only" \
+#   --wandb_project "phylo-llm" \
+#   --tokenizer-path ./phylo_char_tokenizer_with_bos \
+#   --train_dataset_type "uniref90_arrow_lmdb" \
+#   --max_position_embeddings 2048 \
+#   --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
+#   --lmdb_path /gpfs/data/brandeslab/Data/uniref/uniref100_merged.lmdb \
+#   --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
+#   --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
+#   --output-dir /gpfs/data/brandeslab/model_checkpts \
+#   --pair_log_csv /gpfs/data/brandeslab/User/as12267/phylo_pair_logs/modernBERT_113M_phylo_bs512_ctxt_2048_pairs.csv \
+#   --seed 42 \
+#   --data_seed 42 \
+#   --num_train_epochs 100 \
+#   --vep_eval_steps 100000000 \
+#   --logging_steps 4 \
+#   --batch_sampler "phylo_default" \
+#   --per_device_train_batch_size 16 \
+#   --gradient_accumulation_steps 32 \
+#   --learning_rate 3e-4 \
+#   --dataloader_num_workers 8 \
+#   --dataloader_persistent_workers True \
+#   --dataloader_prefetch_factor 4 \
+#   --eval_strategy "no" \
+#   --save_strategy "no"  
+
+
+# torchrun \
+#   --nproc-per-node=1 \
+#   --master_addr="${MASTER_ADDR}" \
+#   --master_port="${MASTER_PORT}" \
+#   python_scripts/train_modernBERT.py \
+#   --run-name modernBERT_113M_prefixlm_bs512_ctxt_2048_correct_prefixlm \
+#   --model_type "ModernBERT" \
+#   --training_type "prefixlm_modernbert" \
+#   --wandb_project "phylo-llm" \
+#   --tokenizer-path ./phylo_char_tokenizer_with_bos \
+#   --train_dataset_type "uniref90_arrow_lmdb" \
+#   --max_position_embeddings 2048 \
+#   --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
+#   --lmdb_path /gpfs/data/brandeslab/Data/uniref/uniref100_merged.lmdb \
+#   --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
+#   --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
+#   --output-dir /gpfs/data/brandeslab/phylo_llm_checkpts \
+#   --pair_log_csv /gpfs/data/brandeslab/User/as12267/prefixlm_pair_logs/modernBERT_113M_prefixlm_bs512_ctxt_2048_pairs.csv \
+#   --attn_implementation flash_attention_2 \
+#   --num_train_epochs 100 \
+#   --vep_eval_steps 100000000 \
+#   --logging_steps 4 \
+#   --per_device_train_batch_size 16 \
+#   --gradient_accumulation_steps 32 \
+#   --learning_rate 3e-4 \
+#   --dataloader_num_workers 8 \
+#   --dataloader_persistent_workers True \
+#   --dataloader_prefetch_factor 4 \
+#   --eval_strategy "no" \
+#   --save_strategy "steps" \
+#   --save_steps 500
+
+
 torchrun \
   --nproc-per-node=1 \
   --master_addr="${MASTER_ADDR}" \
   --master_port="${MASTER_PORT}" \
-  python_scripts/train_modernBERT.py \
-  --run-name modernBERT_113M_prefixlm_bs512_ctxt_2048_100k \
+  /gpfs/data/brandeslab/User/as12267/HuggingfaceTransformer/python_scripts/train_modernBERT.py \
+  --run-name modernBERT_113M_prefixlm_uniref50 \
   --model_type "ModernBERT" \
   --training_type "prefixlm_modernbert" \
   --wandb_project "phylo-llm" \
   --tokenizer-path ./phylo_char_tokenizer_with_bos \
-  --train_dataset_type "uniref90_arrow_lmdb" \
+  --train_dataset_type "uniref90_arrow_fasta" \
   --max_position_embeddings 2048 \
-  --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
-  --lmdb_path /gpfs/data/brandeslab/Data/uniref/uniref100_merged.lmdb \
-  --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
+  --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref50_clusters_arrow/train \
+  --fasta_path /gpfs/data/brandeslab/Data/uniref/uniref90.fasta \
+  --index_db_path /gpfs/data/brandeslab/User/as12267/uniref90.idx \
+  --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref50_clusters_arrow/test \
   --vep-input-csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
   --output-dir /gpfs/data/brandeslab/phylo_llm_checkpts \
   --attn_implementation flash_attention_2 \
-  --max_steps 100000 \
-  --vep_eval_steps 50 \
-  --logging_steps 20 \
+  --num_train_epochs 100 \
+  --vep_eval_steps 500 \
+  --logging_steps 4 \
   --per_device_train_batch_size 16 \
   --gradient_accumulation_steps 32 \
-  --learning_rate 1e-4 \
-  --dataloader_num_workers 4 \
+  --learning_rate 3e-4 \
+  --dataloader_num_workers 8 \
   --dataloader_persistent_workers True \
-  --dataloader_prefetch_factor 2 \
+  --dataloader_prefetch_factor 4 \
   --eval_strategy "no" \
-  --save_steps 200 \
-  --save_strategy "steps"
+  --save_strategy "steps" \
+  --save_steps 500

@@ -3,9 +3,9 @@
 #SBATCH --job-name=jupyterGPU
 #SBATCH --partition=a100_short
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:a100:1
-#SBATCH --cpus-per-task=4
-#SBATCH --time=03-00:00:00
+#SBATCH --gres=gpu:a100:2
+#SBATCH --cpus-per-task=16
+#SBATCH --time=06:00:00
 #SBATCH --mem=50G
 #SBATCH --mail-type=BEGIN
 #SBATCH --mail-user=sinha.anushka12@gmail.com
@@ -13,7 +13,7 @@
 #SBATCH --error=%x_%j.err
 
 # ---------------------- Info ----------------------
-XDG_RUNTIME_DIR=""
+export XDG_RUNTIME_DIR=""
 port=$(shuf -i8000-9999 -n1)
 node=$(hostname -s)
 user=$(whoami)
@@ -40,7 +40,7 @@ http://localhost:${port}
 module load anaconda3
 source /gpfs/share/apps/anaconda3/gpu/2023.09/etc/profile.d/conda.sh
 # conda deactivate
-conda activate /gpfs/data/brandeslab/User/as12267/.conda/envs/huggingface_bert
+conda activate /gpfs/data/brandeslab/User/as12267/.conda/envs/huggingface_bert_cu126
 echo "Conda env: $CONDA_PREFIX"
 
 # Optional GPU info

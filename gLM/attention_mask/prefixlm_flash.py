@@ -142,16 +142,6 @@ def _batch_arange(starts, lengths, device):
     """
     For each i produce arange(starts[i], starts[i] + lengths[i]),
     concatenated into one flat tensor. Pure tensor ops, no Python loop.
-
-    The trick: build a delta array of length `total` where
-      delta[seg_pos[i]] = starts[i] - starts[i-1] - lengths[i-1]   (i > 0)
-      delta[0]          = starts[0]
-    and every other position = 1.  cumsum(delta) then gives the correct
-    absolute index at every position.
-
-    Derivation for position k inside segment i (flat index = seg_pos[i] + k):
-      cumsum up to seg_pos[i]     = starts[i]          (from the anchor)
-      each subsequent +1 adds k   → starts[i] + k  ✓
     """
     total = int(lengths.sum())
     if total == 0:
@@ -160,24 +150,21 @@ def _batch_arange(starts, lengths, device):
     starts  = starts.long()
     lengths = lengths.long()
 
-    # Flat position where each segment begins (exclusive prefix-sum of lengths)
-    seg_pos = F.pad(lengths.cumsum(0)[:-1], (1, 0))   # (B,)
+    # Position of each segment in the flat output
+    seg_pos = F.pad(lengths.cumsum(0)[:-1], (1, 0))  # (B,)
 
-    # Start with all 1s (the within-segment increment)
-    delta = torch.ones(total, dtype=torch.long, device=device)
+    # Within-segment offset for every output position
+    # repeat_interleave gives [0,0,...,1,1,...,2,2,...] shaped (total,)
+    # where each value i repeats lengths[i] times
+    seg_ids  = torch.repeat_interleave(
+        torch.arange(len(lengths), device=device), lengths
+    )  # (total,) — which segment each position belongs to
 
-    # At each segment boundary, jump to the new start value instead of +1.
-    # delta[seg_pos[i]] should equal starts[i] - (value just before it).
-    # The value just before seg_pos[i] after cumsum = starts[i-1] + lengths[i-1] - 1
-    # So the correction needed vs the default "+1" is:
-    #   starts[i] - (starts[i-1] + lengths[i-1] - 1) - 1
-    #   = starts[i] - starts[i-1] - lengths[i-1]
-    # For i=0: we want delta[0] = starts[0], but it's currently 1, so add starts[0]-1.
-    corrections = starts - F.pad(starts[:-1] + lengths[:-1], (1, 0))
-    delta[seg_pos] += corrections   # seg_pos[0]=0 always, so i=0 is handled too
+    # Position within segment = flat_pos - seg_start_pos
+    flat_pos  = torch.arange(total, device=device)
+    within    = flat_pos - seg_pos[seg_ids]   # offset within segment
 
-    return delta.cumsum(0)
-
+    return starts[seg_ids] + within
 
 # =============================================================================
 # Two-call flash attention (global and local variants)

@@ -8,7 +8,7 @@ from sklearn.metrics import roc_auc_score
 from transformers import TrainerCallback
 from torch.distributed import is_initialized, get_rank, barrier, all_gather_object
 
-from gLM.attention_mask.prefixlm_flash import run_encoder_flash
+from gLM.attention_mask import run_encoder_flash
 
 
 class ZeroShotVEPEvaluationCallback(TrainerCallback):
@@ -320,6 +320,199 @@ class ZeroShotVEPEvaluationCallback(TrainerCallback):
             log_probs = torch.nn.functional.log_softmax(logit_at_pos.float(), dim=-1)
             log_odds = (log_probs[alt_id] - log_probs[ref_id]).item()
             results[orig_idx] = log_odds
+
+        return results
+
+    def compute_log_odds_prefixlm_full_LL(self, model, seqs, poses, refs, alts):
+        """
+        PrefixLM full log-likelihood variant score.
+
+        For each variant, computes:
+
+            score = LL(ALT sequence from mutation position onward)
+                - LL(REF sequence from mutation position onward)
+
+        Both REF and ALT are packed as:
+
+            [CLS] wildtype_full [SEP] candidate_full [SEP]
+
+        where candidate_full is either the REF sequence or ALT-mutated sequence.
+
+        Only suffix amino acid tokens from `pos` onward are included in the LL sum.
+        Special tokens and unchanged suffix tokens before `pos` are not scored.
+        """
+
+        results = [None] * len(seqs)
+        device = next(model.parameters()).device
+
+        valid_data = []
+        for i, (seq, pos, ref, alt) in enumerate(zip(seqs, poses, refs, alts)):
+            if len(seq) > self.max_len or pos >= len(seq) or seq[pos] != ref:
+                continue
+
+            ref_id = self.tokenizer.convert_tokens_to_ids(ref)
+            alt_id = self.tokenizer.convert_tokens_to_ids(alt)
+
+            if ref_id is None or alt_id is None:
+                continue
+
+            alt_seq = seq[:pos] + alt + seq[pos + 1:]
+
+            valid_data.append((i, seq, alt_seq, pos))
+
+        if not valid_data:
+            return results
+
+        cls_id = self.tokenizer.cls_token_id
+        sep_id = self.tokenizer.sep_token_id
+        pad_id = self.tokenizer.pad_token_id
+
+        all_input_ids = []
+        all_prefix_lengths = []
+        all_score_start_positions = []
+        row_to_orig = []
+        row_is_alt = []
+
+        for orig_idx, ref_seq, alt_seq, pos in valid_data:
+            enc_ref_full = self.tokenizer(ref_seq, add_special_tokens=False)["input_ids"]
+            enc_alt_full = self.tokenizer(alt_seq, add_special_tokens=False)["input_ids"]
+
+            # Safety check: tokenized sequence length should match amino acid sequence length
+            # for a character-level protein tokenizer.
+            if len(enc_ref_full) != len(ref_seq) or len(enc_alt_full) != len(alt_seq):
+                continue
+
+            prefix = enc_ref_full
+            prefix_len = 1 + len(prefix) + 1  # [CLS] + prefix + [SEP]
+
+            # Score candidate suffix tokens from mutation position onward.
+            # In input_ids, suffix token at biological position `pos` is located at:
+            #
+            #   prefix_len + pos
+            #
+            # But logits[:, t-1] predict input_ids[:, t], so after shifting:
+            #
+            #   target_ids = input_ids[:, 1:]
+            #
+            # the shifted target index is:
+            #
+            #   prefix_len + pos - 1
+            #
+            score_start = prefix_len + pos - 1
+
+            for candidate_seq_ids, is_alt in [(enc_ref_full, False), (enc_alt_full, True)]:
+                packed = [cls_id] + prefix + [sep_id] + candidate_seq_ids + [sep_id]
+
+                if len(packed) > self.max_len:
+                    continue
+
+                all_input_ids.append(packed)
+                all_prefix_lengths.append(prefix_len)
+                all_score_start_positions.append(score_start)
+                row_to_orig.append(orig_idx)
+                row_is_alt.append(is_alt)
+
+        if not all_input_ids:
+            return results
+
+        max_batch_len = max(len(ids) for ids in all_input_ids)
+
+        padded_input_ids = [
+            ids + [pad_id] * (max_batch_len - len(ids))
+            for ids in all_input_ids
+        ]
+
+        input_ids_tensor = torch.tensor(
+            padded_input_ids,
+            dtype=torch.long,
+            device=device,
+        )
+
+        prefix_lengths_tensor = torch.tensor(
+            all_prefix_lengths,
+            dtype=torch.long,
+            device=device,
+        )
+
+        score_start_tensor = torch.tensor(
+            all_score_start_positions,
+            dtype=torch.long,
+            device=device,
+        )
+
+        row_to_orig = np.array(row_to_orig)
+        row_is_alt = np.array(row_is_alt, dtype=bool)
+
+        base_model = model.module if hasattr(model, "module") else model
+
+        with torch.no_grad():
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                hidden_states = run_encoder_flash(
+                    model,
+                    input_ids_tensor,
+                    prefix_lengths_tensor,
+                    device,
+                )
+
+                logits = base_model.decoder(base_model.head(hidden_states))
+
+            # logits[:, t] predicts input_ids[:, t + 1]
+            logits_shifted = logits[:, :-1, :].contiguous()
+            target_ids = input_ids_tensor[:, 1:].contiguous()
+
+            # Shape: [2N, L-1, vocab]
+            log_probs = torch.nn.functional.log_softmax(
+                logits_shifted.float(),
+                dim=-1,
+            )
+
+            # Shape: [2N, L-1]
+            token_log_probs = torch.gather(
+                log_probs,
+                dim=-1,
+                index=target_ids.unsqueeze(-1),
+            ).squeeze(-1)
+
+            # Build mask for positions to include in LL.
+            #
+            # Include only suffix amino acid tokens from mutation position onward.
+            # Exclude:
+            #   - prefix tokens
+            #   - first [SEP]
+            #   - final [SEP]
+            #   - padding
+            batch_size, shifted_len = target_ids.shape
+            positions = torch.arange(shifted_len, device=device).unsqueeze(0)
+
+            seq_lens = (input_ids_tensor != pad_id).sum(dim=1)
+
+            # Last real token is final [SEP] at input position seq_len - 1.
+            # In shifted target coordinates, final [SEP] appears at index seq_len - 2.
+            # So amino acid suffix target indices end before seq_len - 2.
+            score_end_tensor = seq_lens - 2
+
+            score_mask = (
+                (positions >= score_start_tensor.unsqueeze(1))
+                & (positions < score_end_tensor.unsqueeze(1))
+            )
+
+            ll_per_row = (token_log_probs * score_mask).sum(dim=1)
+
+        # Pair REF and ALT rows back together by original example index
+        ll_ref_by_orig = {}
+        ll_alt_by_orig = {}
+
+        for row_idx, orig_idx in enumerate(row_to_orig):
+            ll_value = ll_per_row[row_idx].item()
+
+            if row_is_alt[row_idx]:
+                ll_alt_by_orig[orig_idx] = ll_value
+            else:
+                ll_ref_by_orig[orig_idx] = ll_value
+
+        for orig_idx in ll_ref_by_orig:
+            if orig_idx in ll_alt_by_orig:
+                results[orig_idx] = ll_alt_by_orig[orig_idx] - ll_ref_by_orig[orig_idx]
 
         return results
 

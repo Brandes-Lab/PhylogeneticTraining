@@ -1,9 +1,18 @@
-from .uniref90_pair_arrow_fasta import Uniref90ArrowDatasetForFASTA, Uniref90ArrowEvalDatasetForFASTA
-from .uniref90_pair_arrow_lmdb import Uniref90ArrowDatasetForLMDB, Uniref90ArrowEvalDatasetForLMDB
+from .uniref90_pair_arrow_fasta import (
+    Uniref90ArrowDatasetForFASTA,
+    Uniref90ArrowEvalDatasetForFASTA,
+)
+
+from .uniref90_pair_arrow_lmdb import (
+    Uniref90ArrowDatasetForLMDB,
+    Uniref90ArrowEvalDatasetForLMDB,
+    Uniref90ArrowDatasetForLMDB_deterministic,
+)
 
 __all__ = [
-    "Uniref90ArrowDatasetForFASTA", 
-    "Uniref90ArrowEvalDatasetForFASTA", 
-    "Uniref90ArrowDatasetForLMDB", 
-    "Uniref90ArrowEvalDatasetForLMDB"
+    "Uniref90ArrowDatasetForFASTA",
+    "Uniref90ArrowEvalDatasetForFASTA",
+    "Uniref90ArrowDatasetForLMDB",
+    "Uniref90ArrowEvalDatasetForLMDB",
+    "Uniref90ArrowDatasetForLMDB_deterministic",
 ]

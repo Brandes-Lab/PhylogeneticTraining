@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=T5Gemma_PLL_bs_4096_singlepos_wtenc
+#SBATCH --job-name=modernBERT_113M_prefixlm_aligned_bs512_ctxt_2048
 #SBATCH --partition=a100_short
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=20G
-#SBATCH --time=06:00:00
-#SBATCH --output=logs/T5Gemma_PLL_bs_4096_singlepos_wtenc_%A_%a.out
-#SBATCH --error=logs/T5Gemma_PLL_bs_4096_singlepos_wtenc_%A_%a.err
+#SBATCH --time=03-00:00:00
+#SBATCH --output=logs/modernBERT_113M_prefixlm_aligned_bs512_ctxt_2048_%A_%a.out
+#SBATCH --error=logs/modernBERT_113M_prefixlm_aligned_bs512_ctxt_2048_%A_%a.err
 
 set -euo pipefail
 
@@ -43,7 +43,7 @@ python -c "import torch; print('cuDNN version:', torch.backends.cudnn.version())
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
 
-CKPT_LIST="checkpoints.txt"
+CKPT_LIST="checkpoints_to_use.txt"
 CKPT_PATH=$(sed -n "$((SLURM_ARRAY_TASK_ID+1))p" "${CKPT_LIST}")
 
 echo "Task ${SLURM_ARRAY_TASK_ID} using checkpoint: ${CKPT_PATH}"
@@ -58,21 +58,45 @@ echo "Task ${SLURM_ARRAY_TASK_ID} using checkpoint: ${CKPT_PATH}"
 #   --out_dir /gpfs/data/brandeslab/User/as12267/T5Gemma_PLL_bs_4096_results
 
 
-torchrun --nproc_per_node=1 --master_port=$MASTER_PORT python_scripts/pll.py \
-  --model_ckpt "${CKPT_PATH}" \
-  --zero_shot_csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
-  --max_len 1024 \
-  --batch_size 16 \
-  --pll_mode wtenc \
-  --run_name "pll_$(basename "$(dirname "${CKPT_PATH}")")_$(basename "${CKPT_PATH}")" \
-  --out_dir /gpfs/data/brandeslab/User/as12267/T5Gemma_97M_phylo_bs_4096_arrow_fasta_file_zero_shot_vep_full_seq_LL_wtenc
+# torchrun --nproc_per_node=1 --master_port=$MASTER_PORT python_scripts/pll.py \
+#   --model_ckpt "${CKPT_PATH}" \
+#   --zero_shot_csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
+#   --max_len 1024 \
+#   --batch_size 16 \
+#   --pll_mode wtenc \
+#   --run_name "pll_$(basename "$(dirname "${CKPT_PATH}")")_$(basename "${CKPT_PATH}")" \
+#   --out_dir /gpfs/data/brandeslab/User/as12267/T5Gemma_97M_phylo_bs_4096_arrow_fasta_file_zero_shot_vep_full_seq_LL_wtenc
+
+cd /gpfs/data/brandeslab/User/as12267/HuggingfaceTransformer
+export PYTHONPATH=/gpfs/data/brandeslab/User/as12267/HuggingfaceTransformer:${PYTHONPATH:-}
+
+# torchrun --nproc_per_node=1 --master_port=$MASTER_PORT python_scripts/prefixlm_zero_shot_vep.py\
+#   --model_ckpt "${CKPT_PATH}" \
+#   --zero_shot_csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
+#   --max_len 2048 \
+#   --batch_size 8 \
+#   --score_type full_ll \
+#   --run_name "pll_$(basename "$(dirname "${CKPT_PATH}")")_$(basename "${CKPT_PATH}")" \
+#   --out_dir /gpfs/data/brandeslab/User/as12267/modernBERT_113M_prefixlm_bs512_ctxt_2048_100k_final_full_seq_LL
 
 
-torchrun --nproc_per_node=1 --master_port=$MASTER_PORT python_scripts/pll.py \
-  --model_ckpt "${CKPT_PATH}" \
-  --zero_shot_csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
-  --max_len 1024 \
-  --batch_size 16 \
-  --pll_mode singlepos \
-  --run_name "pll_$(basename "$(dirname "${CKPT_PATH}")")_$(basename "${CKPT_PATH}")" \
-  --out_dir /gpfs/data/brandeslab/User/as12267/T5Gemma_97M_phylo_bs_4096_arrow_fasta_file_zero_shot_vep_singlepos_wtenc
+# torchrun --nproc_per_node=1 --master_port=$MASTER_PORT python_scripts/prefixlm_zero_shot_vep.py\
+#   --model_ckpt "${CKPT_PATH}" \
+#   --zero_shot_csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
+#   --max_len 2048 \
+#   --batch_size 8 \
+#   --score_type single_pos \
+#   --run_name "pll_$(basename "$(dirname "${CKPT_PATH}")")_$(basename "${CKPT_PATH}")" \
+#   --out_dir /gpfs/data/brandeslab/User/as12267/modernBERT_113M_prefixlm_bs512_ctxt_2048_100k_final_single_pos
+
+
+
+torchrun --nproc_per_node=1 --master_port=$MASTER_PORT python_scripts/prefixlm_zero_shot_vep.py\
+    --model_ckpt "${CKPT_PATH}" \
+    --zero_shot_csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
+    --max_len 2048 \
+    --batch_size 8 \
+    --score_type single_pos \
+    --run_name "pll_$(basename "$(dirname "${CKPT_PATH}")")_$(basename "${CKPT_PATH}")" \
+    --out_dir /gpfs/data/brandeslab/User/as12267/modernBERT_113M_prefixlm_aligned_bs512_ctxt_2048 \
+    --per_variant_csv

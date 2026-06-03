@@ -10,17 +10,34 @@ while True:
     except OverflowError:
         max_int = int(max_int / 10)
 
-TSV_PATH = "/gpfs/data/brandeslab/Data/uniref/uniref90_cluster_members_ge2_bk_test.tsv"
-OUT_BASE = "/gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow"
-PREFIX   = "UniRef100_"
+# TSV_PATH = "/gpfs/data/brandeslab/Data/uniref/uniref90_cluster_members_ge2_bk_test.tsv"
+# OUT_BASE = "/gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow"
+# PREFIX   = "UniRef100_"
+
+# 0.19% test (0.01% resolution via mod 10000 buckets) -> ~101k clusters
+# TEST_BUCKETS = 19
+# TOTAL_ROWS   = 53_506_765  # clusters (lines minus header), only used for % logs
+# LOG_EVERY    = 100_000
+
+TSV_PATH = "/gpfs/data/brandeslab/Data/uniref/uniref50_cluster_members_min2.tsv"
+OUT_BASE = "/gpfs/data/brandeslab/Data/uniref/uniref50_clusters_arrow"
+PREFIX   = "UniRef90_"
 
 # 0.19% test (0.01% resolution via mod 10000 buckets) -> ~101k clusters
 TEST_BUCKETS = 19
-TOTAL_ROWS   = 53_506_765  # clusters (lines minus header), only used for % logs
-LOG_EVERY    = 100_000
+TOTAL_ROWS   = 12_238_634  # clusters (lines minus header), only used for % logs
+LOG_EVERY    = 50_000
 
 def is_test(cluster_id: str) -> bool:
     return (xxhash.xxh64(cluster_id).intdigest() % 10_000) < TEST_BUCKETS
+
+def normalize_member_id(m):
+    m = m.strip()
+    # If the TSV already has UniRef90_ prefix, do not add it again
+    if m.startswith("UniRef90_"):
+        return m
+    return "UniRef90_" + m
+
 
 features = Features({
     "cluster_id": Value("string"),
@@ -44,18 +61,37 @@ def make_generator(which: str):
                     flush=True
                 )
 
-            cid = row["cluster_id"]
+            # cid = row["cluster_id"]
+            # in_test = is_test(cid)
+
+            # # Split filter:
+            # if which == "test" and not in_test:
+            #     continue
+            # if which == "train" and in_test:
+            #     continue
+
+            # mids = row["member_ids"].split(",")
+            # kept += 1
+            # yield {"cluster_id": cid, "member_ids": [PREFIX + m for m in mids]}
+            
+            # For Uniref50, the column names are different:
+            cid = row["ClusterID"]
             in_test = is_test(cid)
 
-            # Split filter:
             if which == "test" and not in_test:
                 continue
             if which == "train" and in_test:
                 continue
 
-            mids = row["member_ids"].split(",")
+            mids = row["MemberIDs"].split(",")
+            mids = [normalize_member_id(m) for m in mids if m.strip()]
+
             kept += 1
-            yield {"cluster_id": cid, "member_ids": [PREFIX + m for m in mids]}
+
+            yield {
+                "cluster_id": cid,
+                "member_ids": mids,
+            }
 
     print(f"[{which}] DONE seen={seen:,} kept={kept:,}", flush=True)
 
