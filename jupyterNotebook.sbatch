@@ -4,7 +4,7 @@
 #SBATCH --partition=a100_short
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:a100:2
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=32
 #SBATCH --time=06:00:00
 #SBATCH --mem=50G
 #SBATCH --mail-type=BEGIN

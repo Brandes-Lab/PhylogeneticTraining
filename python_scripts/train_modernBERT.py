@@ -95,6 +95,9 @@ class CustomTrainingArguments(TrainingArguments):
     vep_eval_steps: int = field(
         default=10000, metadata={"help": "Number of steps between VEP evaluations"}
     )
+    vep_batch_size: int = field(
+        default=16, metadata={"help": "Per-rank batch size for VEP eval forward passes"}
+    )
     dataloader_num_workers: int = field(
         default=6, metadata={"help": "Number of dataloader workers"}
     )
@@ -358,6 +361,7 @@ def main():
             trainer=trainer,
             eval_every_n_steps=training_args.vep_eval_steps,
             training_type=training_args.training_type,
+            batch_size=training_args.vep_batch_size,
         )
     )
 

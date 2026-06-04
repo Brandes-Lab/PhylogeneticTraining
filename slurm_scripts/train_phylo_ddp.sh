@@ -1,14 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=modernBERT_phylo_aligned_ddp
-#SBATCH --partition=a100_long
-#SBATCH --nodes=7
-#SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:4
+#SBATCH --job-name=modernBERT_1B_phylo_aligned_ddp
+#SBATCH --partition=a100_short
+#SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=32
-#SBATCH --mem=200G
-#SBATCH --time=07-00:00:00
-#SBATCH --output=modernBERT_phylo_aligned_ddp_%j.out
-#SBATCH --error=modernBERT_phylo_aligned_ddp_%j.err
+#SBATCH --mem=100G
+#SBATCH --time=15:00:00
+#SBATCH --output=/gpfs/data/brandeslab/User/as12267/slurm_outputs/modernBERT_1B_phylo_aligned_ddp_%j.out
+#SBATCH --error=/gpfs/data/brandeslab/User/as12267/slurm_outputs/modernBERT_1B_phylo_aligned_ddp_%j.err
 
 # ──────────────────────────────────────────────────────────────────────
 # Multi-node / multi-GPU DDP training launcher.
@@ -31,7 +29,7 @@ source /gpfs/share/apps/anaconda3/gpu/2023.09/etc/profile.d/conda.sh
 conda activate /gpfs/data/brandeslab/User/as12267/.conda/envs/huggingface_bert_cu126
 
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
-export PYTHONPATH=/gpfs/data/brandeslab/User/as12267/HuggingfaceTransformer:${PYTHONPATH:-}
+export PYTHONPATH=/gpfs/data/brandeslab/User/as12267/PhylogeneticTraining:${PYTHONPATH:-}
 
 # Strip module-loaded CUDA from LD_LIBRARY_PATH to avoid cuDNN mismatches
 export LD_LIBRARY_PATH=$(echo "${LD_LIBRARY_PATH:-}" | tr ':' '\n' \
@@ -76,14 +74,14 @@ export WANDB_API_KEY="wandb_v1_7PAHBSo0EnMGeL7x0Yi5qNbEu7g_U42CVxsqV4LoZV5voL8xk
 #
 # Effective batch size = world_size × per_device_train_batch_size × grad_accum
 #                      = (SLURM_NNODES × 4) × 16 × 2
-srun torchrun \
+torchrun \
   --nnodes=$SLURM_NNODES \
   --nproc-per-node=4 \
   --rdzv-id=$SLURM_JOB_ID \
   --rdzv-backend=c10d \
   --rdzv-endpoint=$MASTER_ADDR:$MASTER_PORT \
-  /gpfs/data/brandeslab/User/as12267/HuggingfaceTransformer/python_scripts/train_modernBERT.py \
-  --run_name modernBERT_phylo_aligned_ddp_${SLURM_JOB_ID} \
+  /gpfs/data/brandeslab/User/as12267/PhylogeneticTraining/python_scripts/train_modernBERT.py \
+  --run_name modernBERT_1B_phylo_aligned_ddp_${SLURM_JOB_ID} \
   --model_type "ModernBERT" \
   --training_type "phylo_aligned" \
   --wandb_project "phylo-llm" \
@@ -96,18 +94,55 @@ srun torchrun \
   --vep_input_csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
   --output_dir /gpfs/data/brandeslab/phylo_llm_checkpts \
   --attn_implementation flash_attention_2 \
-  --seed 42 \
-  --data_seed 42 \
-  --max_steps 1000000 \
+  --num_train_epochs 100 \
   --per_device_train_batch_size 16 \
-  --gradient_accumulation_steps 2 \
+  --gradient_accumulation_steps 4 \
+  --vep_batch_size 16 \
   --learning_rate 3e-4 \
-  --logging_steps 10 \
-  --vep_eval_steps 5000 \
-  --dataloader_num_workers 8 \
+  --logging_steps 4 \
+  --vep_eval_steps 500 \
+  --dataloader_num_workers 16 \
   --dataloader_persistent_workers True \
-  --dataloader_prefetch_factor 4 \
+  --dataloader_prefetch_factor 8 \
   --eval_strategy "no" \
-  --save_strategy "steps" \
-  --save_steps 1000 \
+  --save_strategy "no" \
+  --eval_strategy "steps" \
+  --eval_steps 500 \
   --ddp_timeout 3600
+
+# torchrun \
+#   --nnodes=1 \
+#   --nproc_per_node=2 \
+#   --rdzv-id=${SLURM_JOB_ID} \
+#   --rdzv-backend=c10d \
+#   --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT} \
+#   /gpfs/data/brandeslab/User/as12267/PhylogeneticTraining/python_scripts/train_modernBERT.py \
+#   --run_name modernBERT_1B_phylo_aligned_ddp_${SLURM_JOB_ID} \
+#   --model_type "ModernBERT" \
+#   --training_type "phylo_aligned" \
+#   --wandb_project "phylo-llm" \
+#   --tokenizer_path ./phylo_char_tokenizer_with_bos \
+#   --train_dataset_type "uniref90_arrow_lmdb" \
+#   --max_position_embeddings 2048 \
+#   --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
+#   --lmdb_path /gpfs/data/brandeslab/Data/uniref/uniref100_merged.lmdb \
+#   --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
+#   --vep_input_csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
+#   --output_dir /gpfs/data/brandeslab/phylo_llm_checkpoints \
+#   --attn_implementation flash_attention_2 \
+#   --num_train_epochs 100 \
+#   --per_device_train_batch_size 16 \
+#   --gradient_accumulation_steps 4 \
+#   --vep_batch_size 16 \
+#   --learning_rate 3e-4 \
+#   --logging_steps 10 \
+#   --vep_eval_steps 5000 \
+#   --dataloader_num_workers 16 \
+#   --dataloader_persistent_workers True \
+#   --dataloader_prefetch_factor 8 \
+#   --save_strategy "steps" \
+#   --save_steps 1000 \
+#   --eval_strategy "steps" \
+#   --eval_steps 10 \
+#   --ddp_timeout 3600
+
