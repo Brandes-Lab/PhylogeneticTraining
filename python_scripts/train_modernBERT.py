@@ -98,6 +98,9 @@ class CustomTrainingArguments(TrainingArguments):
     vep_batch_size: int = field(
         default=16, metadata={"help": "Per-rank batch size for VEP eval forward passes"}
     )
+    vep_max_len: int = field(
+        default=4096, metadata={"help": "Max sequence length for VEP eval filter"}
+    )
     dataloader_num_workers: int = field(
         default=6, metadata={"help": "Number of dataloader workers"}
     )
@@ -235,6 +238,7 @@ def main():
             vocab_size=tokenizer.vocab_size,
             tokenizer=tokenizer,
             attn_implementation=model_args.attn_implementation,
+            max_position_embeddings=model_args.max_position_embeddings,
         ).build()
     else:  # PrefixLM_ModernBERT
         print_rank0("Building PrefixLM_ModernBERT model...")
@@ -362,6 +366,7 @@ def main():
             eval_every_n_steps=training_args.vep_eval_steps,
             training_type=training_args.training_type,
             batch_size=training_args.vep_batch_size,
+            max_len=training_args.vep_max_len,
         )
     )
 

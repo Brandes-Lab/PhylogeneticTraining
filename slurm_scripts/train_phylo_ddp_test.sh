@@ -90,7 +90,7 @@ torchrun \
   --attn_implementation flash_attention_2 \
   --num_train_epochs 100 \
   --per_device_train_batch_size 16 \
-  --gradient_accumulation_steps 4 \
+  --gradient_accumulation_steps 128 \
   --vep_batch_size 16 \
   --learning_rate 3e-4 \
   --logging_steps 4 \

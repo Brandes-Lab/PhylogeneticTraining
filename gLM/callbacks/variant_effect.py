@@ -17,7 +17,7 @@ class ZeroShotVEPEvaluationCallback(TrainerCallback):
         tokenizer,
         input_csv,
         trainer,
-        max_len=4096,
+        max_len=8192,
         eval_every_n_steps=20000,
         batch_size=2,
         training_type="phylo_unaligned",

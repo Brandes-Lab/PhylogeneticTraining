@@ -6,15 +6,16 @@ from transformers import (
 
 
 class ProteinBertModel:
-    def __init__(self, vocab_size, tokenizer, attn_implementation):
+    def __init__(self, vocab_size, tokenizer, attn_implementation, max_position_embeddings):
         self.vocab_size = vocab_size
         self.tokenizer = tokenizer
         self.attn_implementation = attn_implementation
+        self.max_position_embeddings = max_position_embeddings
 
     def build(self):
         config = ModernBertConfig(
             vocab_size=self.vocab_size,
-            max_position_embeddings=4096,
+            max_position_embeddings=self.max_position_embeddings,
             num_hidden_layers=24,
             num_attention_heads=20,
             hidden_size=1600,

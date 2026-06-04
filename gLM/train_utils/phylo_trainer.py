@@ -13,10 +13,19 @@ def seed_worker(worker_id):
 
 class PhyloTrainer(Trainer):
     def get_train_dataloader(self):
+        # Per-rank generator so each GPU shuffles independently and its
+        # dataloader workers derive distinct Python RNG seeds. Without this
+        # offset, every rank would draw the same cluster indices and the
+        # same (m1, m2) pairs, making DDP all-reduce average identical
+        # gradients across ranks.
+        generator = torch.Generator()
+        generator.manual_seed(self.args.seed + self.args.process_index)
+
         return DataLoader(
             self.train_dataset,
             batch_size=self.args.train_batch_size,
             shuffle=True,
+            generator=generator,
             num_workers=self.args.dataloader_num_workers,
             pin_memory=self.args.dataloader_pin_memory,
             persistent_workers=self.args.dataloader_persistent_workers,
