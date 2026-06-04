@@ -1,7 +1,4 @@
-from transformers import DataCollatorForTokenClassification
 import torch
-from gLM.sequences.pairwise_align import align_pair, percent_identity
-
 
 
 class PhyloCollator:
@@ -13,21 +10,20 @@ class PhyloCollator:
     def __call__(self, batch):
 
 
-        if self.training_type == "phylo_encoder_only":
+        if self.training_type == "phylo_aligned":
             # P(Seq1 | Seq2), input_ids from Seq2, labels from Seq1
-            # batch: List[Tuple[a1, a2, pid]]
-            a1s, a2s, pids = zip(*batch)
+            # batch: List[Tuple[a1, a2]]
+            a1s, a2s = zip(*batch)
 
             # Replace gaps with [GAP] token and join back to string
             tokens1 = ["".join(["[GAP]" if c == "-" else c for c in seq]) for seq in a1s]
             tokens2 = ["".join(["[GAP]" if c == "-" else c for c in seq]) for seq in a2s]
-            
-            # Convert to tokens, truncate to max length if needed, pad to the max in the batch
+
             input_ids = self.tokenizer(
                     tokens2,
                     padding="longest",
                     truncation=True,
-                    max_length = self.max_seq_len,
+                    max_length=self.max_seq_len,
                     return_tensors="pt",
                 )
 
@@ -35,29 +31,24 @@ class PhyloCollator:
                     tokens1,
                     padding="longest",
                     truncation=True,
-                    max_length = self.max_seq_len,
+                    max_length=self.max_seq_len,
                     return_tensors="pt",
                 )
 
-            # Conver {PAD} tokens in labels to -100
             labels = dec["input_ids"].clone()
             labels[labels == self.tokenizer.pad_token_id] = -100
-            
-        
-            assert(labels == -100).sum() == (dec["input_ids"] == self.tokenizer.pad_token_id).sum()
+
+            assert (labels == -100).sum() == (dec["input_ids"] == self.tokenizer.pad_token_id).sum()
             assert torch.all((labels == -100) | ((labels >= 0) & (labels < self.tokenizer.vocab_size)))
-            
-            batch_out = {
+
+            return {
                 "input_ids": input_ids["input_ids"],
                 "attention_mask": input_ids["attention_mask"],
                 "labels": labels,
-                "percent_identity": torch.tensor(pids, dtype=torch.float32),
             }
-            
-            return batch_out
 
         
-        elif self.training_type == "phylo_encoder_decoder":
+        elif self.training_type == "phylo_unaligned":
             # P(Seq1 | Seq2), input_ids from Seq2, targets from Seq1
             # batch: List[Tuple[s1, s2]]
             inputs, targets = zip(*batch)

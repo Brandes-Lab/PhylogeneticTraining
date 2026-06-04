@@ -5,7 +5,7 @@ import lmdb
 import torch
 from torch.utils.data import Dataset
 from datasets import load_from_disk
-from gLM.sequences.pairwise_align import align_pair, percent_identity
+from gLM.sequences.pairwise_align import align_pair
 
 
 
@@ -167,19 +167,19 @@ class Uniref90ArrowDatasetForLMDB_deterministic(Dataset):
         )
 
     def _format(self, s1: str, s2: str):
-        if self.training_type == "phylo_encoder_only":
+        if self.training_type == "phylo_aligned":
             a1, a2 = align_pair(s1, s2)
             if len(a1) != len(a2):
                 raise ValueError("Aligned lengths differ")
-            return (a1, a2, percent_identity(a1, a2))
+            return (a1, a2)
 
-        elif self.training_type == "phylo_encoder_decoder":
+        elif self.training_type == "phylo_unaligned":
             return (s1, s2)
 
         else:
             raise ValueError(
                 f"Uniref90ArrowDatasetForLMDB_deterministic only supports "
-                f"phylo_encoder_only and phylo_encoder_decoder, got: {self.training_type}"
+                f"phylo_aligned and phylo_unaligned, got: {self.training_type}"
             )
 
 class Uniref90ArrowDatasetForLMDB(Dataset):
@@ -268,14 +268,13 @@ class Uniref90ArrowDatasetForLMDB(Dataset):
         if self.training_type == "MLM":
             return s1 if random.random() < 0.5 else s2
 
-        elif self.training_type == "phylo_encoder_only":
+        elif self.training_type == "phylo_aligned":
             a1, a2 = align_pair(s1, s2)
             if len(a1) != len(a2):
                 raise ValueError("Aligned lengths differ")
-            # return (a1, a2, percent_identity(a1, a2))
             return (a1, a2)
 
-        elif self.training_type == "phylo_encoder_decoder":
+        elif self.training_type == "phylo_unaligned":
             return (s1, s2)
 
         else:
@@ -382,13 +381,13 @@ class Uniref90ArrowEvalDatasetForLMDB(Dataset):
         if self.training_type == "MLM":
             return s1
 
-        elif self.training_type == "phylo_encoder_only":
+        elif self.training_type == "phylo_aligned":
             a1, a2 = align_pair(s1, s2)
             if len(a1) != len(a2):
                 raise RuntimeError("Aligned lengths differ")
-            return (a1, a2, percent_identity(a1, a2))
+            return (a1, a2)
 
-        elif self.training_type == "phylo_encoder_decoder":
+        elif self.training_type == "phylo_unaligned":
             return (s1, s2)
 
         else:

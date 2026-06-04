@@ -18,29 +18,14 @@ class PrefixLMCollator:
     After the autoregressive shift in the model forward:
         logits[SEP_position] predicts first seq1 token
         logits[seq1_i]       predicts seq1_{i+1}
-    Args:
-        tokenizer: tokenizer with cls_token_id, sep_token_id, pad_token_id
-        max_seq_len: maximum total packed sequence length (default 4096)
-        has_pid: if True, batch items are (seq1, seq2, percent_identity) triples
-                 if False, batch items are (seq1, seq2) pairs
     """
 
-    def __init__(self, tokenizer, max_seq_len: int = 4096, has_pid: bool = True):
+    def __init__(self, tokenizer, max_seq_len: int = 4096):
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
-        self.has_pid = has_pid
 
     def __call__(self, batch):
-        """
-        Args:
-            batch: List of tuples from dataset.__getitem__
-                   Either (seq1, seq2) or (seq1, seq2, percent_identity)
-        """
-        if self.has_pid:
-            s1s, s2s, pids = zip(*batch)
-        else:
-            s1s, s2s = zip(*batch)
-            pids = None
+        s1s, s2s = zip(*batch)
 
         # Tokenize without special tokens — we add [CLS]/[SEP] manually
         enc_s2 = self.tokenizer(list(s2s), add_special_tokens=False)["input_ids"]
@@ -59,17 +44,14 @@ class PrefixLMCollator:
 
             # Truncate both sequences proportionally if too long
             if len(packed) > self.max_seq_len:
-                # Available tokens for both sequences (minus 3 special tokens: [CLS], [SEP], [SEP])
                 available = self.max_seq_len - 3
                 total = len(s2_ids) + len(s1_ids)
-                # Split available tokens proportionally to original lengths
                 s2_keep = int(available * len(s2_ids) / total)
                 s1_keep = available - s2_keep
                 s2_ids = s2_ids[:s2_keep]
                 s1_ids = s1_ids[:s1_keep]
                 packed = [cls_id] + s2_ids + [sep_id] + s1_ids + [sep_id]
 
-            # prefix_len recalculated after truncation so it's always correct
             prefix_len = 1 + len(s2_ids) + 1  # [CLS] + seq2 + [SEP]
             all_input_ids.append(packed)
             all_prefix_lengths.append(prefix_len)
@@ -91,13 +73,8 @@ class PrefixLMCollator:
             padded_input_ids.append(input_ids + [pad_id] * pad_len)
             labels_list.append(labels + [-100] * pad_len)
 
-        batch_out = {
+        return {
             "input_ids": torch.tensor(padded_input_ids, dtype=torch.long),
             "labels": torch.tensor(labels_list, dtype=torch.long),
             "prefix_lengths": torch.tensor(all_prefix_lengths, dtype=torch.long),
         }
-
-        if pids is not None:
-            batch_out["percent_identity"] = torch.tensor(pids, dtype=torch.float32)
-
-        return batch_out

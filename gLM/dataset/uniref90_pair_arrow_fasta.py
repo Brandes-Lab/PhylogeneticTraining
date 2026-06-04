@@ -1,6 +1,6 @@
 from torch.utils.data import Dataset
 from datasets import load_from_disk
-from gLM.sequences.pairwise_align import align_pair, percent_identity
+from gLM.sequences.pairwise_align import align_pair
 from gLM.sequences.seq_fetcher import SequenceFetcher
 import random
 
@@ -47,14 +47,13 @@ class Uniref90ArrowDatasetForFASTA(Dataset):
             if self.training_type == "MLM":
                 return s1 if random.random() < 0.5 else s2
 
-            elif self.training_type == "phylo_encoder_only":
+            elif self.training_type == "phylo_aligned":
                 a1, a2 = align_pair(s1, s2)
                 if len(a1) != len(a2):
                     continue
-                pid = percent_identity(a1, a2)
-                return (a1, a2, pid)
+                return (a1, a2)
 
-            elif self.training_type == "phylo_encoder_decoder":
+            elif self.training_type == "phylo_unaligned":
                 return (s1, s2)
 
             else:
@@ -134,16 +133,15 @@ class Uniref90ArrowEvalDatasetForFASTA(Dataset):
             if self.training_type == "MLM":
                 return s1
 
-            elif self.training_type == "phylo_encoder_only":
+            elif self.training_type == "phylo_aligned":
                 a1, a2 = align_pair(s1, s2)
                 if len(a1) != len(a2):
                     raise RuntimeError(
                         f"Aligned lengths differ for deterministic pair at idx={idx}: ({m1}, {m2})"
                     )
-                pid = percent_identity(a1, a2)
-                return (a1, a2, pid)
+                return (a1, a2)
 
-            elif self.training_type == "phylo_encoder_decoder":
+            elif self.training_type == "phylo_unaligned":
                 if {m1, m2} == target_pair:
                     print(f"Returning target pair at idx={idx}")
                     print(f"s1: {s1[:50]}... (length {len(s1)})")
@@ -166,14 +164,13 @@ class Uniref90ArrowEvalDatasetForFASTA(Dataset):
                 if self.training_type == "MLM":
                     return s1
 
-                elif self.training_type == "phylo_encoder_only":
+                elif self.training_type == "phylo_aligned":
                     a1, a2 = align_pair(s1, s2)
                     if len(a1) != len(a2):
                         continue
-                    pid = percent_identity(a1, a2)
-                    return (a1, a2, pid)
+                    return (a1, a2)
 
-                elif self.training_type == "phylo_encoder_decoder":
+                elif self.training_type == "phylo_unaligned":
                     return (s1, s2)
 
                 else:

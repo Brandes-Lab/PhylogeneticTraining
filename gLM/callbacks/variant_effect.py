@@ -20,7 +20,7 @@ class ZeroShotVEPEvaluationCallback(TrainerCallback):
         max_len=4096,
         eval_every_n_steps=20000,
         batch_size=2,
-        training_type="phylo_encoder_decoder",
+        training_type="phylo_unaligned",
     ):
         self.tokenizer = tokenizer
         self.input_csv = input_csv
@@ -40,11 +40,9 @@ class ZeroShotVEPEvaluationCallback(TrainerCallback):
     def compute_log_odds_batch(self, model, seqs, poses, refs, alts):
         if self.training_type == "MLM":
             return self.compute_log_odds_MLM(model, seqs, poses, refs, alts)
-        elif self.training_type == "phylo_encoder_only":
-            return self.compute_log_odds_phylo_encoder_only(model, seqs, poses, refs, alts)
-        elif self.training_type == "phylo_encoder_decoder":
-            return self.compute_log_odds_encoder_decoder(model, seqs, poses, refs, alts)
-        elif self.training_type == "prefixlm_modernbert":
+        elif self.training_type == "phylo_aligned":
+            return self.compute_log_odds_phylo_aligned(model, seqs, poses, refs, alts)
+        elif self.training_type == "phylo_unaligned":
             return self.compute_log_odds_prefixlm(model, seqs, poses, refs, alts)
         else:
             raise ValueError(f"Unknown training type: {self.training_type}")
@@ -110,7 +108,7 @@ class ZeroShotVEPEvaluationCallback(TrainerCallback):
         return results
 
     
-    def compute_log_odds_phylo_encoder_only(self, model, seqs, poses, refs, alts):
+    def compute_log_odds_phylo_aligned(self, model, seqs, poses, refs, alts):
         """
         Computes zero-shot variant effect scores for phylo-style encoder-only models (e.g., ModernBERT trained on aligned sequence pairs).
 
@@ -158,69 +156,6 @@ class ZeroShotVEPEvaluationCallback(TrainerCallback):
         
         return results
     
-    def compute_log_odds_encoder_decoder(self, model, seqs, poses, refs, alts):
-        results = [None] * len(seqs)
-        device = next(model.parameters()).device
-        valid_data = []
-
-        for i, (seq, pos, ref, alt) in enumerate(zip(seqs, poses, refs, alts)):
-            if len(seq) <= self.max_len and pos < len(seq) and seq[pos] == ref:
-                ref_id = self.tokenizer.convert_tokens_to_ids(ref)
-                alt_id = self.tokenizer.convert_tokens_to_ids(alt)
-                if ref_id is None or alt_id is None:
-                    continue
-                valid_data.append((i, seq, pos, ref_id, alt_id))
-
-        if not valid_data:
-            return results
-
-        indices, valid_seqs, valid_poses, ref_ids, alt_ids = zip(*valid_data)
-
-        enc_inputs = self.tokenizer(list(valid_seqs), return_tensors="pt", padding="longest",
-                                    truncation=True, max_length=self.max_len).to(device)
-        
-        decoder_prefixes = [seq[:pos] if pos > 0 else "" for seq, pos in zip(valid_seqs, valid_poses)]
-        
-        decoder_inputs = self.tokenizer(decoder_prefixes, return_tensors="pt", padding="longest",
-                                        truncation=True, max_length=self.max_len, add_special_tokens=False).to(device)
-
-        batch_size = decoder_inputs.input_ids.shape[0]
-        start_tokens = torch.full((batch_size, 1), self.tokenizer.pad_token_id, device=device)
-        decoder_input_ids = torch.cat([start_tokens, decoder_inputs.input_ids], dim=1)
-        start_mask = torch.ones((batch_size, 1), dtype=torch.long, device=device)
-        decoder_attention_mask = torch.cat([start_mask, decoder_inputs.attention_mask], dim=1)
-
-
-        with torch.no_grad():
-            outputs = model(
-                input_ids=enc_inputs.input_ids,
-                attention_mask=enc_inputs.attention_mask,
-                decoder_input_ids=decoder_input_ids,
-                decoder_attention_mask=decoder_attention_mask
-            )
-
-            logits = outputs.logits
-            
-            seq_lengths = decoder_attention_mask.sum(dim=1) - 1
-            batch_indices = torch.arange(len(seq_lengths), device=device)
-            logits_i = logits[batch_indices, seq_lengths, :]  # logits at mutation position
-            
-            probs = torch.nn.functional.softmax(logits_i, dim=-1)
-
-            ref_ids_tensor = torch.tensor(ref_ids, device=device)
-            alt_ids_tensor = torch.tensor(alt_ids, device=device)
-
-            p_ref = probs[batch_indices, ref_ids_tensor]
-            p_alt = probs[batch_indices, alt_ids_tensor]
-
-            log_odds = torch.log(p_alt) - torch.log(p_ref)
-            log_odds = log_odds.tolist()
-
-        for i, log_odd_value in zip(indices, log_odds):
-            results[i] = log_odd_value
-
-        return results
-
     def compute_log_odds_prefixlm(self, model, seqs, poses, refs, alts):
         results = [None] * len(seqs)
         device = next(model.parameters()).device
