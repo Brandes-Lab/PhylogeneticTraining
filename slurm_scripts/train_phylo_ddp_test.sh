@@ -1,6 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=modernBERT_1B_phylo_aligned_ddp
 #SBATCH --partition=a100_short
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=100G
@@ -9,14 +11,8 @@
 #SBATCH --error=/gpfs/data/brandeslab/User/as12267/slurm_outputs/modernBERT_1B_phylo_aligned_ddp_%j.err
 
 # ──────────────────────────────────────────────────────────────────────
-# Multi-node / multi-GPU DDP training launcher.
+# Single-node DDP training launcher (1 node × 2 GPUs).
 # model_type = ModernBERT, training_type = phylo_aligned -> PhyloTrainer
-#
-# For single-node testing (1 node × N GPUs), edit:
-#   #SBATCH --nodes=1
-#   #SBATCH --gres=gpu:N
-# and adjust --nproc-per-node=N in the srun command.
-# $SLURM_NNODES is read at runtime so nnodes self-adjusts.
 # ──────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -43,8 +39,12 @@ echo "SLURM_NNODES:    $SLURM_NNODES"
 echo "SLURM_NODELIST:  $SLURM_JOB_NODELIST"
 echo "SLURM_JOB_ID:    $SLURM_JOB_ID"
 
-# --- rendezvous (master = first node in the SLURM allocation) ---
-export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+# --- rendezvous (single node -> master is the local node) ---
+if command -v scontrol &>/dev/null; then
+  export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+else
+  export MASTER_ADDR=$(hostname -s)   # fallback when scontrol isn't on PATH
+fi
 export MASTER_PORT=$((12000 + RANDOM % 20000))
 
 echo "MASTER_ADDR: $MASTER_ADDR"
@@ -67,15 +67,9 @@ export TOKENIZERS_PARALLELISM=false
 # --- WandB ---
 export WANDB_API_KEY="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"
 
-# --- launch ---
-# srun launches one task per node (SBATCH --ntasks-per-node=1); each task runs
-# torchrun, which spawns --nproc-per-node worker processes on that node.
-# Total processes = SLURM_NNODES × nproc_per_node
-#
-# Effective batch size = world_size × per_device_train_batch_size × grad_accum
-#                      = (SLURM_NNODES × 4) × 16 × 2
+# --- launch (1 node × 2 GPUs) ---
 torchrun \
-  --nnodes=$SLURM_NNODES \
+  --nnodes=1 \
   --nproc-per-node=2 \
   --rdzv-id=$SLURM_JOB_ID \
   --rdzv-backend=c10d \
@@ -109,40 +103,3 @@ torchrun \
   --eval_strategy "steps" \
   --eval_steps 500 \
   --ddp_timeout 3600
-
-# torchrun \
-#   --nnodes=1 \
-#   --nproc_per_node=2 \
-#   --rdzv-id=${SLURM_JOB_ID} \
-#   --rdzv-backend=c10d \
-#   --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT} \
-#   /gpfs/data/brandeslab/User/as12267/PhylogeneticTraining/python_scripts/train_modernBERT.py \
-#   --run_name modernBERT_1B_phylo_aligned_ddp_${SLURM_JOB_ID} \
-#   --model_type "ModernBERT" \
-#   --training_type "phylo_aligned" \
-#   --wandb_project "phylo-llm" \
-#   --tokenizer_path ./phylo_char_tokenizer_with_bos \
-#   --train_dataset_type "uniref90_arrow_lmdb" \
-#   --max_position_embeddings 2048 \
-#   --train_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/train \
-#   --lmdb_path /gpfs/data/brandeslab/Data/uniref/uniref100_merged.lmdb \
-#   --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
-#   --vep_input_csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
-#   --output_dir /gpfs/data/brandeslab/phylo_llm_checkpoints \
-#   --attn_implementation flash_attention_2 \
-#   --num_train_epochs 100 \
-#   --per_device_train_batch_size 16 \
-#   --gradient_accumulation_steps 4 \
-#   --vep_batch_size 16 \
-#   --learning_rate 3e-4 \
-#   --logging_steps 10 \
-#   --vep_eval_steps 5000 \
-#   --dataloader_num_workers 16 \
-#   --dataloader_persistent_workers True \
-#   --dataloader_prefetch_factor 8 \
-#   --save_strategy "steps" \
-#   --save_steps 1000 \
-#   --eval_strategy "steps" \
-#   --eval_steps 10 \
-#   --ddp_timeout 3600
-
