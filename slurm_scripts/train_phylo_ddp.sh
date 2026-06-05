@@ -1,15 +1,15 @@
 #!/bin/bash
-#SBATCH --job-name=modernBERT_1B_phylo_aligned_ddp
+#SBATCH --job-name=modernBERT_1B_phylo_aligned
 #SBATCH --partition=reservation
 #SBATCH --reservation=brandeslab_reservation
-#SBATCH --nodes=7
+#SBATCH --nodes=4
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:a100:4
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=0
 #SBATCH --time=14-00:00:00
-#SBATCH --output=/gpfs/data/brandeslab/User/as12267/slurm_outputs/modernBERT_1B_phylo_aligned_ddp_%j.out
-#SBATCH --error=/gpfs/data/brandeslab/User/as12267/slurm_outputs/modernBERT_1B_phylo_aligned_ddp_%j.err
+#SBATCH --output=/gpfs/data/brandeslab/User/as12267/slurm_outputs/modernBERT_1B_phylo_aligned_%j.out
+#SBATCH --error=/gpfs/data/brandeslab/User/as12267/slurm_outputs/modernBERT_1B_phylo_aligned_%j.err
 
 set -euo pipefail
 
@@ -109,7 +109,7 @@ srun \
     --rdzv-backend=c10d \
     --rdzv-endpoint="${MASTER_ADDR}:${MASTER_PORT}" \
     /gpfs/data/brandeslab/User/as12267/PhylogeneticTraining/python_scripts/train_modernBERT.py \
-    --run_name modernBERT_1B_phylo_aligned_ddp_${SLURM_JOB_ID} \
+    --run_name modernBERT_1B_phylo_aligned_${SLURM_JOB_ID} \
     --model_type "ModernBERT" \
     --training_type "phylo_aligned" \
     --wandb_project "phylo-llm" \
@@ -120,19 +120,21 @@ srun \
     --lmdb_path /gpfs/data/brandeslab/Data/uniref/uniref100_merged.lmdb \
     --val_dataset_path /gpfs/data/brandeslab/Data/uniref/uniref90_clusters_arrow/test \
     --vep_input_csv /gpfs/data/brandeslab/Data/clinvar_AA_zero_shot_input.csv \
-    --output_dir /gpfs/data/brandeslab/phylo_llm_checkpts \
+    --output_dir /gpfs/data/brandeslab/phylo_llm_checkpts/long_training \
     --attn_implementation flash_attention_2 \
     --num_train_epochs 1000000 \
     --per_device_train_batch_size 8 \
-    --gradient_accumulation_steps 5 \
+    --gradient_accumulation_steps 8 \
     --vep_batch_size 8 \
     --vep_max_len 8192 \
     --learning_rate 1e-4 \
-    --logging_steps 9 \
-    --vep_eval_steps 500000 \
+    --logging_steps 8 \
+    --vep_eval_steps 4500 \
     --dataloader_num_workers 32 \
     --dataloader_persistent_workers True \
     --dataloader_prefetch_factor 16 \
-    --eval_strategy "no" \
-    --save_strategy "no" \
+    --eval_strategy "steps" \
+    --eval_steps 9000 \
+    --save_strategy "steps" \
+    --save_steps 1500 \
     --ddp_timeout 3600
